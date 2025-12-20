@@ -97,44 +97,6 @@ const ConfidenceTooltip = ({ level, className = "" }) => {
     </div>
   );
 };
-// ✅ SpeciesCard component inline
-const SpeciesCard = ({ title, status, species, category }) => {
-  const getStatusColor = (status) => {
-    const colorMap = {
-      'Excellent': '#00BFA5',
-      'Good': '#4CAF50',
-      'Normal': '#FF9800',
-      'Low (Good)': '#00BFA5',
-      'Warning': '#FF5722'
-    };
-    return colorMap[status] || '#666';
-  };
-
-  return (
-    <div className="species-card">
-      <div className="species-title">
-        <span>{title}</span>
-        <span 
-          className="status-badge"
-          style={{ color: getStatusColor(status) }}
-        >
-          Status: {status}
-        </span>
-      </div>
-      
-      <div className="species-grid">
-        {species.map((speciesItem, index) => (
-          <SpeciesItem
-            key={index}
-            species={speciesItem}
-            category={category}
-          />
-        ))}
-      </div>
-    </div>
-  );
-};
-
 // ✅ SpeciesItem component inline
 const SpeciesItem = ({ species, category }) => {
   const formatPercentage = (percentage) => {
@@ -167,10 +129,29 @@ const SpeciesItem = ({ species, category }) => {
     }
   };
 
+  const handleMicrobeWikiClick = (e) => {
+    if (species.microbewiki_url) {
+      e.preventDefault();
+      window.open(species.microbewiki_url, '_blank', 'noopener,noreferrer');
+    }
+  };
+
   return (
     <div className="species-item">
       <div className="species-header">
-        <h4 className="species-name">{species.name}</h4>
+        <h4 className="species-name">
+          {species.name}
+          {species.microbewiki_url && (
+            <button 
+              className="species-name-link"
+              onClick={handleMicrobeWikiClick}
+              title="Learn more about this bacteria"
+              aria-label={`Learn more about ${species.name}`}
+            >
+              🔗
+            </button>
+          )}
+        </h4>
         <div 
           className="species-status"
           style={{ color: getStatusColor(species.status) }}
@@ -219,6 +200,8 @@ const SpeciesItem = ({ species, category }) => {
           <span>High</span>
         </div>
       </div>
+
+      {/* MicrobeWiki Link icon is now next to the species name in the header */}
     </div>
   );
 };
@@ -609,7 +592,8 @@ const activeDomain = getCurrentDomain(); // ← Changed variable name to activeD
 
 // ✅ UPDATED: Main SpeciesCarousel component
 const SpeciesCarousel = ({ speciesData, recommendations, currentDomain }) => {// ← Add recommendations prop
-  const [currentSlide, setCurrentSlide] = useState(0);
+  // Track current page for each category separately
+  const [categoryPages, setCategoryPages] = useState({});
 
   // console.log('📊 SpeciesCarousel received data:', speciesData);
   // console.log('💊 SpeciesCarousel received recommendations:', recommendations); // ← Debug log
@@ -630,22 +614,13 @@ const SpeciesCarousel = ({ speciesData, recommendations, currentDomain }) => {//
   // })));
 
   const moveToSlide = (slideIndex) => {
-    setCurrentSlide(slideIndex);
+    setCategoryPages(prev => ({ ...prev, [slideIndex]: slideIndex }));
   };
 
-  const getCategoryStatus = (category, species) => {
-    if (!species || species.length === 0) return 'normal';
-    
-    const avgPercentage = species.reduce((sum, s) => {
-      const percentage = s.percentage || 0;
-      return sum + percentage;
-    }, 0) / species.length;
-    
-    if (category === 'pathogens' || category === 'protozoa') {
-      return avgPercentage < 0.3 ? 'excellent' : avgPercentage < 0.6 ? 'good' : 'warning';
-    } else {
-      return avgPercentage > 0.8 ? 'excellent' : avgPercentage > 0.6 ? 'good' : 'normal';
-    }
+  const moveToPage = (category, direction) => {
+    const currentPage = categoryPages[category] || 0;
+    const newPage = direction === 'next' ? currentPage + 1 : Math.max(0, currentPage - 1);
+    setCategoryPages(prev => ({ ...prev, [category]: newPage }));
   };
 
   const formatCategoryTitle = (category) => {
@@ -701,45 +676,73 @@ const SpeciesCarousel = ({ speciesData, recommendations, currentDomain }) => {//
 
   return (
     <div className="species-carousel-container">
-      {/* ✅ EXISTING: Species Carousel */}
+      {/* ✅ UPDATED: Vertical Species List with Per-Category Pagination */}
       <div className="species-carousel">
-        <div className="carousel">
-          <div 
-            className="carousel-track"
-            style={{ transform: `translateX(-${currentSlide * 100}%)` }}
-          >
-            {slides.map((category, index) => {
-              const categoryData = speciesData[category];
-              const species = categoryData.species;
-              const status = formatCategoryStatus(category);
-              
-              // console.log(`🔍 Rendering ${category} with ${species.length} species`);
-              
-              return (
-                <div key={category} className="carousel-slide">
-                  <SpeciesCard
-                    title={formatCategoryTitle(category)}
-                    status={status}
-                    species={species}
+        {slides.map((category) => {
+          const categoryData = speciesData[category];
+          const allSpecies = categoryData.species;
+          const status = formatCategoryStatus(category);
+          const itemsPerPage = 5;
+          const currentPage = categoryPages[category] || 0;
+          const totalPages = Math.ceil(allSpecies.length / itemsPerPage);
+          const startIdx = currentPage * itemsPerPage;
+          const endIdx = startIdx + itemsPerPage;
+          const pageSpecies = allSpecies.slice(startIdx, endIdx);
+
+          return (
+            <div key={category} className="species-category-section">
+              {/* Category Title and Status */}
+              <div className="species-category-header">
+                <h3 className="species-category-title" style={{ color: '#00BFA5' }}>
+                  {formatCategoryTitle(category)}
+                </h3>
+                <span 
+                  className="species-category-status"
+                  style={{ 
+                    background: status === 'Good' ? '#4CAF50' : status === 'Monitor' ? '#FF5722' : '#FF9800',
+                    color: 'white'
+                  }}
+                >
+                  Status: {status}
+                </span>
+              </div>
+
+              {/* Vertical Species Cards */}
+              <div className="species-vertical-list">
+                {pageSpecies.map((speciesItem, index) => (
+                  <SpeciesItem
+                    key={`${category}-${startIdx + index}`}
+                    species={speciesItem}
                     category={category}
                   />
+                ))}
+              </div>
+
+              {/* Pagination Controls */}
+              {totalPages > 1 && (
+                <div className="species-pagination">
+                  <button 
+                    className="pagination-btn"
+                    onClick={() => moveToPage(category, 'prev')}
+                    disabled={currentPage === 0}
+                  >
+                    ← Previous
+                  </button>
+                  <span className="pagination-info">
+                    Page {currentPage + 1} of {totalPages}
+                  </span>
+                  <button 
+                    className="pagination-btn"
+                    onClick={() => moveToPage(category, 'next')}
+                    disabled={currentPage >= totalPages - 1}
+                  >
+                    Next →
+                  </button>
                 </div>
-              );
-            })}
-          </div>
-
-          {/* Navigation Dots */}
-          <div className="carousel-dots">
-            {slides.map((_, index) => (
-              <span
-                key={index}
-                className={`dot ${index === currentSlide ? 'active' : ''}`}
-                onClick={() => moveToSlide(index)}
-              />
-            ))}
-          </div>
-        </div>
-
+              )}
+            </div>
+          );
+        })}
       </div>
 
       {/* ✅ NEW: Recommendations Section */}

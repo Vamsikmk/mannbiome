@@ -305,7 +305,8 @@ def group_bacteria_for_carousel(bacteria_analysis: List[Dict]) -> Dict:
                 "measurement_unit": "relative_abundance_fraction",
                 "is_beneficial": cat == "beneficial",
                 "range_fill_width": range_fill,
-                "marker_position": marker
+                "marker_position": marker,
+                "microbewiki_url": b.get("microbewiki_url")
             }
             carousel_groups[target]["species"].append(species_data)
         print(f"🔍 Final carousel groups: {[(k, len(v['species'])) for k, v in carousel_groups.items()]}")
@@ -395,13 +396,14 @@ def get_microbiome_data(customer_id: int, db: Session = Depends(get_db)):
             ev = (item or {}).get("evidence_strength","C")
             msp_id = (item or {}).get("msp_id","")
             units = (item or {}).get("units","relative_abundance_fraction")
+            wiki_url = (item or {}).get("microbewiki_url")
             cat = categorize_bacteria_by_name(name)
             pct = convert_abundance_to_percentage(abundance)
             status = calculate_bacteria_status(abundance, ev, cat)
             analysis.append({
                 "bacteria_name": name, "msp_id": msp_id, "abundance": abundance,
                 "percentage": pct, "evidence_strength": ev, "category": cat,
-                "status": status, "units": units
+                "status": status, "units": units, "microbewiki_url": wiki_url
             })
         scores = calculate_overall_health_score(analysis)
         grouped = group_bacteria_for_carousel(analysis)
@@ -667,6 +669,7 @@ def _species_for_domain(customer_id: int, domain_id: int, db: Session) -> List[D
         pct = convert_abundance_to_percentage(abundance)
         cat = categorize_bacteria_by_name(name)
         status = calculate_bacteria_status(abundance, ev, cat)
+        microbewiki_url = (item or {}).get("microbewiki_url")
         out.append({
             "bacteria_name": name,
             "msp_id": msp_id,  # Add this line
@@ -676,6 +679,7 @@ def _species_for_domain(customer_id: int, domain_id: int, db: Session) -> List[D
             "units": units,
             "category": cat,
             "status": status,
+            "microbewiki_url": microbewiki_url,
             "description": f"Associated with {domain_name} ({next((m.association_type for m in matches if m.domain == domain_name), 'neutral')})"
         })
     return out
@@ -769,8 +773,13 @@ def get_recommendations_only(domain_id: int, customer_id: int, db: Session = Dep
 
 @app.get("/api/clinical-trials", tags=["Portal"])
 def clinical_trials_placeholder():
-    # No clinical trials table found in schema dump; expose explicit 501 to avoid mock data
-    raise HTTPException(status_code=501, detail="Clinical trials endpoint not configured with a data source")
+    # No clinical trials table found in schema dump; return empty list instead of error
+    return {
+        "success": True,
+        "data": [],
+        "message": "No clinical trials data available",
+        "source": "placeholder"
+    }
 
 # -----------------------------------------------------------------------------
 # ----------------------------  DOMAIN API (separate)  ------------------------
@@ -1662,6 +1671,105 @@ def generate_pdf_report(report_request: dict, customer_id: int = None, db: Sessi
                 max_rows=15
             )
             story.append(neutral_table)
+        
+        # Add Recommendations Section
+        story.append(NextPageTemplate('SingleCol'))
+        story.append(PageBreak())
+        
+        # Get recommendations for report
+        try:
+            # Determine which domains to get recommendations for
+            if report_type == "domain" and requested_domains:
+                domains_to_get = requested_domains
+            else:
+                domains_to_get = ["gut", "liver", "heart", "skin", "cognitive", "aging"]
+            
+            # Page title for recommendations
+            story.append(Paragraph(
+                "<b>Personalized Recommendations</b>",
+                ParagraphStyle('PageTitle', fontSize=16, textColor=colors.HexColor('#1A365D'),
+                              spaceAfter=12, fontName='Helvetica-Bold', alignment=1)
+            ))
+            
+            # Get and add recommendations for each domain
+            for domain_name in domains_to_get:
+                try:
+                    result = cached_recommendation_service.get_recommendations(
+                        customer_id=customer_id,
+                        domain_name=domain_name,
+                        db=db,
+                        force_regenerate=False
+                    )
+                    
+                    if result.get("success") and result.get("recommendations"):
+                        rec_data = result["recommendations"]
+                        
+                        # Domain header
+                        story.append(Paragraph(
+                            f"<b>{domain_name.title()} Health Recommendations</b>",
+                            ParagraphStyle('DomainHeader', 
+                                          fontSize=12, 
+                                          textColor=colors.HexColor('#2563EB'),
+                                          spaceAfter=8, 
+                                          fontName='Helvetica-Bold')
+                        ))
+                        
+                        # Dietary Recommendations
+                        if rec_data.get("dietary_recommendations"):
+                            story.append(Paragraph(
+                                "<b>Dietary Recommendations:</b>",
+                                ParagraphStyle('SubHeader', fontSize=10, fontName='Helvetica-Bold', spaceAfter=4)
+                            ))
+                            
+                            for item in rec_data["dietary_recommendations"][:3]:  # Limit to 3 items
+                                story.append(Paragraph(
+                                    f"- <b>{item.get('item', 'N/A')}</b> - {item.get('rationale', 'N/A')}",
+                                    ParagraphStyle('RecommendationItem', fontSize=9, leftIndent=12, spaceAfter=3)
+                                ))
+                        
+                        # Lifestyle Recommendations
+                        if rec_data.get("lifestyle_recommendations"):
+                            story.append(Paragraph(
+                                "<b>Lifestyle Recommendations:</b>",
+                                ParagraphStyle('SubHeader', fontSize=10, fontName='Helvetica-Bold', spaceAfter=4, spaceBefore=6)
+                            ))
+                            
+                            for item in rec_data["lifestyle_recommendations"][:2]:  # Limit to 2 items
+                                story.append(Paragraph(
+                                    f"- <b>{item.get('activity', 'N/A')}</b> - {item.get('rationale', 'N/A')}",
+                                    ParagraphStyle('RecommendationItem', fontSize=9, leftIndent=12, spaceAfter=3)
+                                ))
+                        
+                        # Summary
+                        if rec_data.get("summary"):
+                            story.append(Paragraph(
+                                f"<b>Key Takeaway:</b> <i>{rec_data['summary']}</i>",
+                                ParagraphStyle('Summary', fontSize=9, textColor=colors.HexColor('#4B5563'), 
+                                             spaceBefore=6, spaceAfter=12)
+                            ))
+                        
+                        story.append(Spacer(1, 8))
+                        
+                except Exception as e:
+                    print(f"Error getting recommendations for {domain_name}: {e}")
+                    continue
+            
+            # Add disclaimer
+            story.append(Spacer(1, 20))
+            story.append(Paragraph(
+                "<b>Disclaimer:</b> These recommendations are for informational purposes only. "
+                "Please consult with your healthcare provider before making significant changes to your diet or lifestyle.",
+                ParagraphStyle('Disclaimer', fontSize=8, textColor=colors.HexColor('#6B7280'), 
+                              alignment=0)
+            ))
+            
+        except Exception as e:
+            print(f"Error adding recommendations section: {e}")
+            # Add a simple message if recommendations fail
+            story.append(Paragraph(
+                "Recommendations are currently unavailable. Please try again later.",
+                styles['Normal']
+            ))
         
         # Build PDF
         doc.build(story)

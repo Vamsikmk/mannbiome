@@ -356,6 +356,43 @@ class ApiService {
     };
   }
 
+  /**
+   * Get clinical trials for a specific domain with customer ID
+   * @param {string} domainId - Domain ID
+   * @param {number} customerId - Customer ID
+   * @returns {Promise} - Clinical trials data
+   */
+  async getDomainClinicalTrials(domainId, customerId) {
+    try {
+      // Use the generic clinical trials endpoint (domain-specific endpoint not available in backend)
+      const endpoint = `/api/clinical-trials`;
+      const result = await this.request(endpoint);
+      
+      if (result.success) {
+        return {
+          success: true,
+          trials: result.data || [],
+          message: result.message || "No clinical trials data available"
+        };
+      }
+      
+      // Return empty clinical trials as fallback
+      return {
+        success: true,
+        trials: [],
+        message: "No clinical trials data available for this domain"
+      };
+    } catch (error) {
+      console.warn(`⚠️ Clinical trials request failed, returning empty list:`, error);
+      // Return empty data instead of throwing error
+      return {
+        success: true,
+        trials: [],
+        message: "Clinical trials data not available"
+      };
+    }
+  }
+
   // ============================================
   // FALLBACK DATA METHODS
   // ============================================
