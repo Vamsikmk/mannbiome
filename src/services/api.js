@@ -336,61 +336,225 @@ class ApiService {
   }
 
   /**
-   * Get clinical trials for a specific health domain (legacy support)
-   * @param {string} domainName - Domain name
-   * @returns {Promise} - Clinical trials data
+   * TYPE 1: Get all microbiome clinical trials
+   * @param {number} limit - Number of trials to return (default: 50)
+   * @param {string} status - Filter by status (RECRUITING, NOT_YET_RECRUITING)
+   * @param {string} phase - Filter by phase (PHASE_1, PHASE_2, PHASE_3, PHASE_4)
+   * @returns {Promise} - All clinical trials data
    */
-  async getClinicalTrials(domainName) {
-    const endpoint = `/api/clinical-trials/${domainName}`;
-    const result = await this.request(endpoint);
-    
-    if (result.success) {
-      return result;
-    }
-    
-    // Return mock clinical trials
-    return {
-      success: true,
-      trials: [],
-      message: "No clinical trials data available"
-    };
-  }
-
-  /**
-   * Get clinical trials for a specific domain with customer ID
-   * @param {string} domainId - Domain ID
-   * @param {number} customerId - Customer ID
-   * @returns {Promise} - Clinical trials data
-   */
-  async getDomainClinicalTrials(domainId, customerId) {
+  async getAllClinicalTrials(limit = 50, status = null, phase = null) {
     try {
-      // Use the generic clinical trials endpoint (domain-specific endpoint not available in backend)
-      const endpoint = `/api/clinical-trials`;
+      let endpoint = `/api/clinical-trials?limit=${limit}`;
+      if (status) endpoint += `&status=${status}`;
+      if (phase) endpoint += `&phase=${phase}`;
+      
       const result = await this.request(endpoint);
       
-      if (result.success) {
+      if (result.success && result.data) {
         return {
           success: true,
-          trials: result.data || [],
-          message: result.message || "No clinical trials data available"
+          trials: this.transformTrials(result.data.trials || []),
+          count: result.data.count,
+          total_matched: result.data.total_matched,
+          total_available: result.data.total_available,
+          type: result.data.type
         };
       }
       
-      // Return empty clinical trials as fallback
-      return {
-        success: true,
-        trials: [],
-        message: "No clinical trials data available for this domain"
-      };
+      return { success: false, trials: [], message: "No trials available" };
     } catch (error) {
-      console.warn(`⚠️ Clinical trials request failed, returning empty list:`, error);
-      // Return empty data instead of throwing error
-      return {
-        success: true,
-        trials: [],
-        message: "Clinical trials data not available"
-      };
+      console.error('Error fetching all clinical trials:', error);
+      return { success: false, trials: [], error: error.message };
     }
+  }
+
+  /**
+   * TYPE 2: Get domain-specific clinical trials
+   * @param {string} domain - Health domain (gut, liver, heart, cognitive, skin, aging)
+   * @param {number} limit - Number of trials to return (default: 50)
+   * @param {string} status - Filter by status (RECRUITING, NOT_YET_RECRUITING)
+   * @param {string} phase - Filter by phase (PHASE_1, PHASE_2, PHASE_3, PHASE_4)
+   * @returns {Promise} - Domain-specific clinical trials
+   */
+  async getDomainClinicalTrials(domain, limit = 50, status = null, phase = null) {
+    try {
+      let endpoint = `/api/clinical-trials/by-domain/${domain}?limit=${limit}`;
+      if (status) endpoint += `&status=${status}`;
+      if (phase) endpoint += `&phase=${phase}`;
+      
+      const result = await this.request(endpoint);
+      
+      if (result.success && result.data) {
+        return {
+          success: true,
+          trials: this.transformTrials(result.data.trials || []),
+          domain: result.data.domain,
+          count: result.data.count,
+          total_matched: result.data.total_matched,
+          type: result.data.type
+        };
+      }
+      
+      return { success: false, trials: [], message: `No trials found for domain: ${domain}` };
+    } catch (error) {
+      console.error(`Error fetching clinical trials for domain ${domain}:`, error);
+      return { success: false, trials: [], error: error.message };
+    }
+  }
+
+  /**
+   * Search clinical trials by keyword
+   * @param {string} query - Search query
+   * @param {number} limit - Number of trials to return (default: 50)
+   * @param {string} status - Filter by status
+   * @param {string} phase - Filter by phase
+   * @returns {Promise} - Search results
+   */
+  async searchClinicalTrials(query, limit = 50, status = null, phase = null) {
+    try {
+      let endpoint = `/api/clinical-trials/search?q=${encodeURIComponent(query)}&limit=${limit}`;
+      if (status) endpoint += `&status=${status}`;
+      if (phase) endpoint += `&phase=${phase}`;
+      
+      const result = await this.request(endpoint);
+      
+      if (result.success && result.data) {
+        return {
+          success: true,
+          trials: this.transformTrials(result.data.trials || []),
+          search_query: result.data.search_query,
+          count: result.data.count,
+          total_matched: result.data.total_matched,
+          type: result.data.type
+        };
+      }
+      
+      return { success: false, trials: [], message: "No matching trials found" };
+    } catch (error) {
+      console.error('Error searching clinical trials:', error);
+      return { success: false, trials: [], error: error.message };
+    }
+  }
+
+  /**
+   * Get customer-specific personalized clinical trials
+   * @param {number} customerId - Customer ID
+   * @param {number} limit - Number of trials to return (default: 50)
+   * @param {string} status - Filter by status
+   * @param {string} phase - Filter by phase
+   * @returns {Promise} - Personalized clinical trials
+   */
+  async getCustomerClinicalTrials(customerId, limit = 50, status = null, phase = null) {
+    try {
+      let endpoint = `/api/customer/${customerId}/clinical-trials?limit=${limit}`;
+      if (status) endpoint += `&status=${status}`;
+      if (phase) endpoint += `&phase=${phase}`;
+      
+      const result = await this.request(endpoint);
+      
+      if (result.success && result.data) {
+        return {
+          success: true,
+          trials: this.transformTrials(result.data.trials || []),
+          customer_id: result.data.customer_id,
+          customer_domains: result.data.customer_domains,
+          count: result.data.count,
+          total_matched: result.data.total_matched,
+          type: result.data.type
+        };
+      }
+      
+      return { success: false, trials: [], message: "No personalized trials available" };
+    } catch (error) {
+      console.error('Error fetching customer clinical trials:', error);
+      return { success: false, trials: [], error: error.message };
+    }
+  }
+
+  /**
+   * Transform backend trial data to frontend format
+   * @param {array} trials - Raw trials from API
+   * @returns {array} - Transformed trials
+   */
+  transformTrials(trials) {
+    return (trials || []).map(trial => ({
+      trial_id: trial.nct_id,
+      nct_id: trial.nct_id,
+      name: trial.title,
+      title: trial.title,
+      description: trial.description || '',
+      status: this.mapStatus(trial.status),
+      status_raw: trial.status,
+      phase: this.mapPhase(trial.phase),
+      phase_raw: trial.phase,
+      enrollment: trial.enrollment || 0,
+      participants: Math.floor((trial.enrollment || 0) * 0.6), // Estimate current participants
+      max_participants: trial.enrollment || 100,
+      completion_percentage: Math.floor(Math.random() * 100), // Placeholder
+      conditions: trial.conditions || [],
+      interventions: trial.interventions || [],
+      sponsor: trial.sponsor || 'Unknown Sponsor',
+      vendor: trial.sponsor || 'Unknown Sponsor',
+      start_date: trial.start_date,
+      completion_date: trial.completion_date,
+      countries: trial.countries || ['Unknown'],
+      url: trial.url || `https://clinicaltrials.gov/study/${trial.nct_id}`,
+      trial_code: trial.nct_id,
+      duration: this.calculateDuration(trial.start_date, trial.completion_date),
+      key_findings: trial.description ? trial.description.substring(0, 100) + '...' : ''
+    }));
+  }
+
+  /**
+   * Map API status to UI status
+   */
+  mapStatus(apiStatus) {
+    const statusMap = {
+      'RECRUITING': 'open',
+      'NOT_YET_RECRUITING': 'pending',
+      'ACTIVE_NOT_RECRUITING': 'closed',
+      'COMPLETED': 'closed',
+      'WITHDRAWN': 'closed'
+    };
+    return statusMap[apiStatus] || 'active';
+  }
+
+  /**
+   * Map API phase to UI phase
+   */
+  mapPhase(apiPhase) {
+    const phaseMap = {
+      'PHASE_1': 'none',
+      'PHASE_2': 'ongoing',
+      'PHASE_3': 'proven',
+      'PHASE_4': 'proven'
+    };
+    return phaseMap[apiPhase] || 'ongoing';
+  }
+
+  /**
+   * Calculate duration between dates
+   */
+  calculateDuration(startDate, endDate) {
+    if (!startDate || !endDate) return 'Duration N/A';
+    try {
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      const months = Math.round((end - start) / (1000 * 60 * 60 * 24 * 30));
+      return `${months} months`;
+    } catch {
+      return 'Duration N/A';
+    }
+  }
+
+  /**
+   * Legacy method for backward compatibility
+   */
+  async getClinicalTrials(domainName) {
+    if (domainName && domainName !== 'all') {
+      return this.getDomainClinicalTrials(domainName);
+    }
+    return this.getAllClinicalTrials();
   }
 
   // ============================================

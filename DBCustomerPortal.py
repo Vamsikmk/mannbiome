@@ -1,7 +1,7 @@
 # db-customer-portal.py
 # Combined API: Customer Portal (microbiome/public) + Domain (vectordb schema)
 # FastAPI single app, single Postgres DB (mannbiome). No mocks. Clear HTTP errors.
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, Session
@@ -9,6 +9,9 @@ from typing import Dict, List, Tuple, Any, Optional
 from datetime import datetime, date
 import os
 from dotenv import load_dotenv
+from pathlib import Path
+import shutil
+import pandas as pd
 
 # Load environment variables from .env file
 load_dotenv()
@@ -392,13 +395,23 @@ def get_microbiome_data(customer_id: int, db: Session = Depends(get_db)):
         analysis = []
         for item in bacteria_data:
             name = (item or {}).get("bacteria_name","").strip()
-            abundance = float((item or {}).get("abundance",0))
+            # Support both "abundance" and "relative_abundance" fields
+            abundance = float((item or {}).get("relative_abundance") or (item or {}).get("abundance") or 0)
             ev = (item or {}).get("evidence_strength","C")
             msp_id = (item or {}).get("msp_id","")
             units = (item or {}).get("units","relative_abundance_fraction")
             wiki_url = (item or {}).get("microbewiki_url")
             cat = categorize_bacteria_by_name(name)
-            pct = convert_abundance_to_percentage(abundance)
+            
+            # Check if abundance is already a percentage (>1) or a fraction (0-1)
+            # New upload feature stores as percentage (10.61), old data as fraction (0.1061)
+            if abundance > 1.0:
+                # Already a percentage
+                pct = round(abundance, 2)
+            else:
+                # Fractional abundance, convert to percentage
+                pct = convert_abundance_to_percentage(abundance)
+            
             status = calculate_bacteria_status(abundance, ev, cat)
             analysis.append({
                 "bacteria_name": name, "msp_id": msp_id, "abundance": abundance,
@@ -427,6 +440,194 @@ def get_microbiome_data(customer_id: int, db: Session = Depends(get_db)):
 @app.get("/api/customer/{customer_id}/microbiome-data", tags=["Portal"])
 def get_customer_microbiome_data_frontend(customer_id: int, db: Session = Depends(get_db)):
     return get_microbiome_data(customer_id, db)
+
+# -----------------------------------------------------------------------------
+# PATIENT REPORT UPLOAD ENDPOINT
+# -----------------------------------------------------------------------------
+@app.post("/api/customer/{customer_id}/upload-report", tags=["Portal"])
+async def upload_patient_report(
+    customer_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    """
+    Upload and process a patient PDF report.
+    
+    - Validates customer exists
+    - Saves PDF to local storage (S3-compatible path structure)
+    - Parses bacteria data from PDF
+    - Scores bacteria across 8 health domains
+    - Stores results in database
+    - Returns processing results immediately (synchronous)
+    """
+    try:
+        # Step 1: Validate customer exists
+        result = db.execute(
+            text("SELECT customer_id, user_id FROM customers.customer WHERE customer_id = :cid"),
+            {"cid": customer_id}
+        )
+        customer = result.fetchone()
+        
+        if not customer:
+            raise HTTPException(status_code=404, detail=f"Customer {customer_id} not found")
+        
+        # Step 2: Validate file is PDF
+        if not file.filename.endswith('.pdf'):
+            raise HTTPException(status_code=400, detail="Only PDF files are supported")
+        
+        # Step 3: Create customer-specific upload directory (S3-compatible structure)
+        upload_base = os.getenv("UPLOAD_BASE_PATH", "./uploads")
+        customer_dir = Path(upload_base) / str(customer_id)
+        customer_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Generate filename with timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        pdf_filename = f"report_{timestamp}.pdf"
+        pdf_path = customer_dir / pdf_filename
+        
+        # Step 4: Save PDF to local storage
+        with open(pdf_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        
+        # Step 5: Import processing pipeline
+        from src.patient_processing.patient_report_parser import PatientReportParser
+        from src.patient_processing.bacteria_scorer import BacteriaScorer
+        from src.patient_processing.patient_data_inserter import PatientDataInserter
+        
+        # Step 6: Parse PDF - returns DataFrame
+        parser = PatientReportParser()
+        bacteria_df = parser.parse_report(str(pdf_path))
+        
+        if bacteria_df is None or bacteria_df.empty:
+            raise HTTPException(
+                status_code=400, 
+                detail="Failed to extract bacteria data from PDF. Please ensure the PDF is in the correct format."
+            )
+        
+        # Step 7: Score bacteria across domains - expects DataFrame, returns DataFrame with scored bacteria
+        scorer = BacteriaScorer()
+        scoring_results = scorer.score_patient_bacteria(bacteria_df)
+        
+        # Check if scoring was successful
+        if scoring_results is None or scoring_results.empty:
+            # No bacteria were matched to domains, but we can still save the raw bacteria
+            domain_scores_df = pd.DataFrame(columns=['domain', 'domain_score', 'bacteria_count'])
+        else:
+            # Step 8: Calculate domain scores from scored bacteria
+            domain_scores_df = scoring_results.groupby('domain').agg({
+                'impact_score': 'mean',
+                'bacteria_name': 'count'
+            }).rename(columns={'impact_score': 'domain_score', 'bacteria_name': 'bacteria_count'}).reset_index()
+        
+        # Step 9: Check if customer already has a report (overwrite)
+        existing_check = db.execute(
+            text("SELECT upload_id FROM public.patient_reports WHERE participant_id = :pid"),
+            {"pid": str(customer_id)}
+        )
+        existing_report = existing_check.fetchone()
+        
+        if existing_report:
+            # Delete existing report and related data
+            db.execute(
+                text("DELETE FROM public.patient_bacteria_scores WHERE participant_id = :pid"),
+                {"pid": str(customer_id)}
+            )
+            db.execute(
+                text("DELETE FROM public.patient_domain_scores WHERE participant_id = :pid"),
+                {"pid": str(customer_id)}
+            )
+            db.execute(
+                text("DELETE FROM public.patient_reports WHERE participant_id = :pid"),
+                {"pid": str(customer_id)}
+            )
+            db.commit()
+        
+        # Step 10: Insert into database using PatientDataInserter
+        inserter = PatientDataInserter()
+        inserter.connect()
+        
+        try:
+            # Insert patient report and get upload_id
+            upload_id = inserter.insert_patient_report(
+                participant_id=str(customer_id),
+                timepoint='Baseline',  # Default timepoint
+                bacteria_df=bacteria_df,
+                lab_name=None,
+                sample_id=None,
+                report_date=None,
+                original_filename=file.filename,
+                extraction_confidence=1.0,
+                extraction_notes=None
+            )
+            
+            # Insert bacteria scores if available
+            if not scoring_results.empty:
+                inserter.insert_bacteria_scores(
+                    upload_id=upload_id,
+                    participant_id=str(customer_id),
+                    bacteria_scores_df=scoring_results
+                )
+            
+            # Insert domain scores if available
+            if not domain_scores_df.empty:
+                # Add required columns for insert_domain_scores
+                domain_scores_df['positive_bacteria'] = domain_scores_df.get('positive_bacteria', 0)
+                domain_scores_df['negative_bacteria'] = domain_scores_df.get('negative_bacteria', 0)
+                domain_scores_df['dominant_bacteria'] = domain_scores_df.get('dominant_bacteria', None)
+                domain_scores_df['dominant_impact'] = domain_scores_df.get('dominant_impact', 0.0)
+                domain_scores_df['avg_confidence'] = domain_scores_df.get('avg_confidence', 1.0)
+                domain_scores_df['total_impact'] = domain_scores_df['domain_score']  # Rename for inserter
+                
+                inserter.insert_domain_scores(
+                    upload_id=upload_id,
+                    participant_id=str(customer_id),
+                    domain_scores_df=domain_scores_df
+                )
+            
+            # Commit all changes
+            inserter.conn.commit()
+            
+        except Exception as e:
+            inserter.conn.rollback()
+            raise Exception(f"Database insertion failed: {str(e)}")
+        
+        finally:
+            inserter.disconnect()
+        
+        # Step 11: Return processing results
+        bacteria_scored = len(scoring_results['bacteria_name'].unique()) if not scoring_results.empty else 0
+        
+        return {
+            "success": True,
+            "customer_id": customer_id,
+            "upload_timestamp": timestamp,
+            "pdf_path": str(pdf_path),
+            "processing_results": {
+                "total_bacteria": len(bacteria_df),
+                "bacteria_scored": bacteria_scored,
+                "domains_analyzed": len(domain_scores_df),
+                "domain_scores": {
+                    row['domain']: {
+                        "score": float(row['domain_score']),
+                        "bacteria_count": int(row['bacteria_count'])
+                    }
+                    for _, row in domain_scores_df.iterrows()
+                } if not domain_scores_df.empty else {}
+            },
+            "message": "Report uploaded and processed successfully"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Clean up uploaded file if processing fails
+        if 'pdf_path' in locals() and Path(pdf_path).exists():
+            Path(pdf_path).unlink()
+        
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error processing report: {str(e)}"
+        )
 
 # -----------------------------------------------------------------------------
 # DASHBOARD DATA (Portal) — uses real data only (no mock)
@@ -659,14 +860,23 @@ def _species_for_domain(customer_id: int, domain_id: int, db: Session) -> List[D
     for item in r.bacteria_data:
         name = (item or {}).get("bacteria_name","").strip()
         if not name: continue
-        abundance = float((item or {}).get("abundance",0))
+        # Support both "abundance" and "relative_abundance" fields
+        abundance = float((item or {}).get("relative_abundance") or (item or {}).get("abundance") or 0)
         ev = (item or {}).get("evidence_strength","C")
         msp_id = (item or {}).get("msp_id","")  # Add this line
         units = (item or {}).get("units","relative_abundance_fraction")
         matches = by_name.get(name.lower(), [])
         if not any(m.domain == domain_name for m in matches):
             continue
-        pct = convert_abundance_to_percentage(abundance)
+        
+        # Check if abundance is already a percentage (>1) or a fraction (0-1)
+        if abundance > 1.0:
+            # Already a percentage (new upload data)
+            pct = round(abundance, 2)
+        else:
+            # Fractional abundance (old data), convert to percentage
+            pct = convert_abundance_to_percentage(abundance)
+        
         cat = categorize_bacteria_by_name(name)
         status = calculate_bacteria_status(abundance, ev, cat)
         microbewiki_url = (item or {}).get("microbewiki_url")
@@ -771,15 +981,304 @@ def get_recommendations_only(domain_id: int, customer_id: int, db: Session = Dep
         raise HTTPException(status_code=404, detail="No recommendations configured for this domain")
     return {"success": True, "recommendations": [dict(r._mapping) for r in rows]}
 
-@app.get("/api/clinical-trials", tags=["Portal"])
-def clinical_trials_placeholder():
-    # No clinical trials table found in schema dump; return empty list instead of error
-    return {
-        "success": True,
-        "data": [],
-        "message": "No clinical trials data available",
-        "source": "placeholder"
-    }
+@app.get("/api/clinical-trials", tags=["Clinical Trials"])
+def get_all_trials(limit: int = 50, status: Optional[str] = None, phase: Optional[str] = None):
+    """
+    TYPE 1: Get all microbiome clinical trials for customer display and registration
+    
+    Query Parameters:
+    - limit: Number of trials to return (default: 50)
+    - status: Filter by trial status (RECRUITING, NOT_YET_RECRUITING)
+    - phase: Filter by trial phase (PHASE_1, PHASE_2, PHASE_3, PHASE_4)
+    
+    Returns: All active/recruiting microbiome trials that customer can register for
+    """
+    try:
+        from clinical_trials_service import ClinicalTrialsService
+        
+        service = ClinicalTrialsService()
+        # Fetch comprehensive trials
+        studies = service.fetch_microbiome_trials(max_results=500)
+        
+        # Allowed statuses (only active trials)
+        ALLOWED_STATUSES = ['RECRUITING', 'NOT_YET_RECRUITING']
+        
+        parsed_trials = []
+        for study in studies:
+            trial = service.parse_trial(study)
+            if trial:
+                # Filter by allowed status
+                trial_status = trial.get('status', '').upper()
+                if trial_status in ALLOWED_STATUSES:
+                    parsed_trials.append(trial)
+        
+        # Apply filters
+        filtered_trials = parsed_trials
+        
+        # Filter by status if provided
+        if status and status.upper() in ALLOWED_STATUSES:
+            filtered_trials = [t for t in filtered_trials if t.get('status', '').upper() == status.upper()]
+        
+        # Filter by phase if provided
+        if phase:
+            filtered_trials = [t for t in filtered_trials if t.get('phase', '').upper() == phase.upper()]
+        
+        # Sort by enrollment (most active first)
+        filtered_trials.sort(key=lambda x: x.get('enrollment', 0), reverse=True)
+        
+        return {
+            "success": True,
+            "type": "general_trials",
+            "description": "All microbiome clinical trials available for registration",
+            "filters_applied": {
+                "status": status or "RECRUITING, NOT_YET_RECRUITING",
+                "phase": phase or "all"
+            },
+            "trials": filtered_trials[:limit],
+            "count": len(filtered_trials[:limit]),
+            "total_matched": len(filtered_trials),
+            "total_available": len(parsed_trials),
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching trials: {str(e)}")
+
+
+@app.get("/api/clinical-trials/by-domain/{domain}", tags=["Clinical Trials"])
+def get_trials_by_domain(
+    domain: str, 
+    limit: int = 50, 
+    status: Optional[str] = None, 
+    phase: Optional[str] = None
+):
+    """
+    TYPE 2: Get domain-specific clinical trials for customer display and registration
+    
+    Path Parameters:
+    - domain: Health domain (gut, liver, heart, cognitive, skin, aging)
+    
+    Query Parameters:
+    - limit: Number of trials to return (default: 50)
+    - status: Filter by trial status (RECRUITING, NOT_YET_RECRUITING)
+    - phase: Filter by trial phase (PHASE_1, PHASE_2, PHASE_3, PHASE_4)
+    
+    Returns: Active/recruiting trials specific to the selected health domain
+    """
+    try:
+        from clinical_trials_service import ClinicalTrialsService
+        
+        service = ClinicalTrialsService()
+        all_trials = service.fetch_microbiome_trials(max_results=1000)
+        
+        # Domain keywords mapping
+        domain_keywords = {
+            'gut': ['microbiome', 'dysbiosis', 'probiotics', 'prebiotic', 'gastrointestinal', 'intestinal', 'ibs', 'colitis'],
+            'liver': ['liver', 'hepatic', 'cirrhosis', 'microbiota', 'fibrosis'],
+            'heart': ['cardiovascular', 'microbiota', 'heart health', 'hypertension', 'ldl'],
+            'cognitive': ['brain', 'gut-brain', 'neurotransmitter', 'neuroinflammation', 'neurodegeneration', 'alzheimer', 'dementia'],
+            'skin': ['dermatology', 'skin microbiome', 'dermatitis', 'eczema', 'psoriasis', 'acne'],
+            'aging': ['aging', 'longevity', 'senescence', 'age-related', 'inflammation', 'healthy aging']
+        }
+        
+        keywords = domain_keywords.get(domain.lower(), [domain])
+        
+        # Allowed statuses
+        ALLOWED_STATUSES = ['RECRUITING', 'NOT_YET_RECRUITING']
+        
+        # Filter trials
+        filtered_trials = []
+        for study in all_trials:
+            trial = service.parse_trial(study)
+            if trial:
+                # Check status
+                trial_status = trial.get('status', '').upper()
+                if trial_status not in ALLOWED_STATUSES:
+                    continue
+                
+                # Check domain keywords match
+                text_to_search = (trial['title'] + ' ' + trial['description']).lower()
+                if any(kw.lower() in text_to_search for kw in keywords):
+                    filtered_trials.append(trial)
+        
+        # Apply additional filters
+        if status and status.upper() in ALLOWED_STATUSES:
+            filtered_trials = [t for t in filtered_trials if t.get('status', '').upper() == status.upper()]
+        
+        if phase:
+            filtered_trials = [t for t in filtered_trials if t.get('phase', '').upper() == phase.upper()]
+        
+        # Sort by enrollment
+        filtered_trials.sort(key=lambda x: x.get('enrollment', 0), reverse=True)
+        
+        return {
+            "success": True,
+            "type": "domain_specific_trials",
+            "description": f"Clinical trials related to {domain.upper()} health",
+            "domain": domain.lower(),
+            "domain_keywords": keywords,
+            "filters_applied": {
+                "status": status or "RECRUITING, NOT_YET_RECRUITING",
+                "phase": phase or "all"
+            },
+            "trials": filtered_trials[:limit],
+            "count": len(filtered_trials[:limit]),
+            "total_matched": len(filtered_trials),
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching trials for domain: {str(e)}")
+
+
+@app.get("/api/clinical-trials/search", tags=["Clinical Trials"])
+def search_trials(
+    q: str, 
+    limit: int = 50, 
+    status: Optional[str] = None, 
+    phase: Optional[str] = None
+):
+    """
+    Search clinical trials by keyword
+    
+    Query Parameters:
+    - q: Search keyword/phrase
+    - limit: Number of trials to return (default: 50)
+    - status: Filter by trial status (RECRUITING, NOT_YET_RECRUITING)
+    - phase: Filter by trial phase (PHASE_1, PHASE_2, PHASE_3, PHASE_4)
+    
+    Returns: Matching active/recruiting trials
+    """
+    try:
+        from clinical_trials_service import ClinicalTrialsService
+        
+        service = ClinicalTrialsService()
+        all_trials = service.fetch_microbiome_trials(max_results=1000)
+        
+        # Allowed statuses
+        ALLOWED_STATUSES = ['RECRUITING', 'NOT_YET_RECRUITING']
+        
+        # Filter by search query and status
+        matched_trials = []
+        for study in all_trials:
+            trial = service.parse_trial(study)
+            if trial:
+                # Check status
+                trial_status = trial.get('status', '').upper()
+                if trial_status not in ALLOWED_STATUSES:
+                    continue
+                
+                # Check search query
+                text_to_search = (trial['title'] + ' ' + trial['description']).lower()
+                if q.lower() in text_to_search:
+                    matched_trials.append(trial)
+        
+        # Apply additional filters
+        if status and status.upper() in ALLOWED_STATUSES:
+            matched_trials = [t for t in matched_trials if t.get('status', '').upper() == status.upper()]
+        
+        if phase:
+            matched_trials = [t for t in matched_trials if t.get('phase', '').upper() == phase.upper()]
+        
+        # Sort by enrollment
+        matched_trials.sort(key=lambda x: x.get('enrollment', 0), reverse=True)
+        
+        return {
+            "success": True,
+            "type": "search_results",
+            "description": f"Search results for '{q}'",
+            "search_query": q,
+            "filters_applied": {
+                "status": status or "RECRUITING, NOT_YET_RECRUITING",
+                "phase": phase or "all"
+            },
+            "trials": matched_trials[:limit],
+            "count": len(matched_trials[:limit]),
+            "total_matched": len(matched_trials),
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error searching trials: {str(e)}")
+
+
+@app.get("/api/customer/{customer_id}/clinical-trials", tags=["Clinical Trials"])
+def get_customer_relevant_trials(
+    customer_id: int, 
+    limit: int = 50, 
+    status: Optional[str] = None, 
+    phase: Optional[str] = None, 
+    db: Session = Depends(get_db)
+):
+    """
+    Get clinical trials relevant to customer's health domains
+    
+    Path Parameters:
+    - customer_id: Customer ID
+    
+    Query Parameters:
+    - limit: Number of trials to return (default: 50)
+    - status: Filter by trial status (RECRUITING, NOT_YET_RECRUITING)
+    - phase: Filter by trial phase (PHASE_1, PHASE_2, PHASE_3, PHASE_4)
+    
+    Returns: Trials matching customer's health profile
+    """
+    try:
+        from clinical_trials_service import ClinicalTrialsService
+        
+        # Get customer's health domains
+        domains = []
+        try:
+            dashboard = get_customer_dashboard_data(customer_id, db)
+            if dashboard and "dashboard_data" in dashboard:
+                domains = list(dashboard["dashboard_data"]["health_data"]["domains"].keys())
+        except:
+            domains = ["microbiome", "gut", "probiotics"]
+        
+        # Allowed statuses
+        ALLOWED_STATUSES = ['RECRUITING', 'NOT_YET_RECRUITING']
+        
+        service = ClinicalTrialsService()
+        all_trials = service.fetch_microbiome_trials(max_results=1000)
+        
+        relevant_trials = []
+        for study in all_trials:
+            trial = service.parse_trial(study)
+            if trial:
+                # Check status
+                trial_status = trial.get('status', '').upper()
+                if trial_status not in ALLOWED_STATUSES:
+                    continue
+                
+                # Check domain match
+                text_to_search = (trial['title'] + ' ' + trial['description']).lower()
+                if any(domain.lower() in text_to_search for domain in domains if domain != "overall"):
+                    relevant_trials.append(trial)
+        
+        # Apply additional filters
+        if status and status.upper() in ALLOWED_STATUSES:
+            relevant_trials = [t for t in relevant_trials if t.get('status', '').upper() == status.upper()]
+        
+        if phase:
+            relevant_trials = [t for t in relevant_trials if t.get('phase', '').upper() == phase.upper()]
+        
+        # Sort by enrollment
+        relevant_trials.sort(key=lambda x: x.get('enrollment', 0), reverse=True)
+        
+        return {
+            "success": True,
+            "type": "customer_personalized_trials",
+            "description": "Clinical trials personalized to customer's health domains",
+            "customer_id": customer_id,
+            "customer_domains": [d for d in domains if d != "overall"],
+            "filters_applied": {
+                "status": status or "RECRUITING, NOT_YET_RECRUITING",
+                "phase": phase or "all"
+            },
+            "trials": relevant_trials[:limit],
+            "count": len(relevant_trials[:limit]),
+            "total_matched": len(relevant_trials),
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching customer trials: {str(e)}")
 
 # -----------------------------------------------------------------------------
 # ----------------------------  DOMAIN API (separate)  ------------------------

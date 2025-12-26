@@ -1,81 +1,270 @@
-// pages/ClinicalTrials/ClinicalTrials.jsx - Updated with collapsible arrows and hook fix
-import React, { useState, useEffect, useCallback } from 'react';
+// pages/ClinicalTrials/ClinicalTrials.jsx - LOCAL FILTERING ARCHITECTURE
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAppContext } from '../../context';
 import apiService from '../../services/api';
 import './ClinicalTrials.css';
 
+// Helper function to safely join array values
+const safeJoin = (value, separator = ', ') => {
+  if (Array.isArray(value)) {
+    return value.join(separator) || 'N/A';
+  }
+  if (typeof value === 'string') {
+    return value || 'N/A';
+  }
+  return 'N/A';
+};
+
 const ClinicalTrials = () => {
   const { state } = useAppContext();
   const { user } = state;
-  const [trials, setTrials] = useState([]);
-  const [filteredTrials, setFilteredTrials] = useState([]);
+  
+  // CACHED TRIALS - Fetched once per view type and stored locally
+  const [cachedTrials, setCachedTrials] = useState({
+    all: [],
+    domain: {},
+    personalized: [],
+    search: []
+  });
+  const [currentViewTrials, setCurrentViewTrials] = useState([]); // Trials for current view
+  
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
-  const [expandedTrials, setExpandedTrials] = useState({}); // New state for collapsible
+  const [expandedTrials, setExpandedTrials] = useState({});
+  const [viewType, setViewType] = useState('all'); // all, domain, personalized, search
+  const [currentPage, setCurrentPage] = useState(1); // Pagination - current page number
+    // ALL FILTERS (applied locally on cached data)
   const [filters, setFilters] = useState({
-    category: 'all',
-    status: 'all',
-    phase: 'all'
+    domain: 'gut',
+    status: 'all',           // all, open, pending, closed
+    sponsor: '',             // sponsor name selection
+    location: ''             // location selection from dropdown
   });
 
-  const loadTrials = async () => {
+  // FETCH TRIALS ONCE per view type
+  const loadTrialsForView = useCallback(async () => {
     try {
       setLoading(true);
-      const response = await apiService.getClinicalTrials();
-      
-      if (response.success) {
-        setTrials(response.trials || []);
-      } else {
-        console.error('Failed to load clinical trials');
-        setTrials([]);
+      let response;
+
+      if (viewType === 'domain') {
+        // Load domain-specific trials (fetch once, cache by domain)
+        if (!cachedTrials.domain[filters.domain]) {
+          response = await apiService.getDomainClinicalTrials(
+            filters.domain,
+            10000
+          );
+          
+          if (response.success) {
+            const uniqueTrials = deduplicateTrials(response.trials || []);
+            setCachedTrials(prev => ({
+              ...prev,
+              domain: { ...prev.domain, [filters.domain]: uniqueTrials }
+            }));
+            setCurrentViewTrials(uniqueTrials);
+          }
+        } else {
+          setCurrentViewTrials(cachedTrials.domain[filters.domain]);
+        }
+      } else if (viewType === 'personalized' && user?.customer_id) {
+        // Load customer-personalized trials (fetch once, cache)
+        if (cachedTrials.personalized.length === 0) {
+          response = await apiService.getCustomerClinicalTrials(
+            user.customer_id,
+            10000
+          );
+          
+          if (response.success) {
+            const uniqueTrials = deduplicateTrials(response.trials || []);
+            setCachedTrials(prev => ({
+              ...prev,
+              personalized: uniqueTrials
+            }));
+            setCurrentViewTrials(uniqueTrials);
+          }
+        } else {
+          setCurrentViewTrials(cachedTrials.personalized);
+        }
+      } else if (viewType === 'all') {
+        // Load all trials (fetch once, cache)
+        if (cachedTrials.all.length === 0) {
+          response = await apiService.getAllClinicalTrials(10000);
+          
+          if (response.success) {
+            const uniqueTrials = deduplicateTrials(response.trials || []);
+            setCachedTrials(prev => ({
+              ...prev,
+              all: uniqueTrials
+            }));
+            setCurrentViewTrials(uniqueTrials);
+          }
+        } else {
+          setCurrentViewTrials(cachedTrials.all);
+        }
       }
     } catch (error) {
-      console.error('Error loading clinical trials:', error);
-      setTrials([]);
+      console.error('Error loading trials:', error);
+      setCurrentViewTrials([]);
     } finally {
       setLoading(false);
     }
-  };
+  }, [viewType, filters.domain, user?.customer_id, cachedTrials.domain, cachedTrials.personalized, cachedTrials.all]);
 
-  // ✅ FIX: Use useCallback to memoize applyFilters function
-  const applyFilters = useCallback(() => {
-    let filtered = trials;
+  // Deduplicate trials by nct_id
+  const deduplicateTrials = useCallback((trials) => {
+    const trialsMap = new Map();
+    trials.forEach(trial => {
+      if (!trialsMap.has(trial.nct_id)) {
+        trialsMap.set(trial.nct_id, trial);
+      }
+    });
+    return Array.from(trialsMap.values());
+  }, []);
 
-    // Search filter
-    if (searchTerm) {
-      filtered = filtered.filter(trial =>
-        trial.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        trial.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        trial.vendor.toLowerCase().includes(searchTerm.toLowerCase())
+  // Load trials on mount and when view type changes
+  useEffect(() => {
+    loadTrialsForView();
+  }, [viewType, filters.domain, loadTrialsForView]);
+
+  // Extract available filter options from loaded trials
+  const availableFilters = useMemo(() => {
+    const filterOptions = {
+      statuses: new Set(),
+      conditions: new Set(),
+      sponsors: new Set(),
+      interventions: new Set()
+    };
+
+    currentViewTrials.forEach(trial => {
+      // Collect statuses
+      if (trial.status_raw) {
+        filterOptions.statuses.add(trial.status_raw);
+      }
+
+      // Collect conditions
+      if (trial.conditions) {
+        const conds = Array.isArray(trial.conditions) ? trial.conditions : [trial.conditions];
+        conds.forEach(c => {
+          if (c && c !== 'N/A' && typeof c === 'string') {
+            filterOptions.conditions.add(c);
+          }
+        });
+      }
+
+      // Collect sponsors
+      if (trial.sponsor && trial.sponsor !== 'Unknown Sponsor') {
+        filterOptions.sponsors.add(trial.sponsor);
+      }
+
+      // Collect interventions
+      if (trial.interventions) {
+        const interventions = Array.isArray(trial.interventions) ? trial.interventions : [trial.interventions];
+        interventions.forEach(i => {
+          if (i && i !== 'N/A' && typeof i === 'string') {
+            filterOptions.interventions.add(i);
+          }
+        });
+      }
+    });
+
+    // Convert to sorted arrays
+    const result = {
+      statuses: Array.from(filterOptions.statuses).sort(),
+      conditions: Array.from(filterOptions.conditions).sort(),
+      sponsors: Array.from(filterOptions.sponsors).sort(),
+      interventions: Array.from(filterOptions.interventions).sort()
+    };
+
+    return result;
+  }, [currentViewTrials]);
+
+  // APPLY ALL FILTERS LOCALLY (no API calls)
+  const filteredTrials = useMemo(() => {
+    let results = currentViewTrials;
+
+    // 1. STATUS FILTER (using mapped status: open, pending, closed)
+    if (filters.status !== 'all') {
+      results = results.filter(trial => {
+        const trialStatus = trial.status || '';
+        return trialStatus === filters.status;
+      });
+    }
+
+    // 2. SPONSOR FILTER
+    if (filters.sponsor.trim()) {
+      results = results.filter(trial => {
+        return trial.sponsor === filters.sponsor;
+      });
+    }
+
+    // 3. LOCATION FILTER
+    if (filters.location.trim()) {
+      results = results.filter(trial => {
+        let countries = trial.countries || [];
+        
+        // Handle JSON string format
+        if (typeof countries === 'string') {
+          try {
+            countries = JSON.parse(countries);
+          } catch (e) {
+            countries = [];
+          }
+        }
+        
+        // Handle array format
+        if (Array.isArray(countries)) {
+          return countries.includes(filters.location);
+        }
+        
+        return false;
+      });
+    }
+
+    // 4. SEARCH TERM FILTER
+    if (searchTerm.trim()) {
+      const searchLower = searchTerm.toLowerCase();
+      results = results.filter(trial =>
+        trial.name.toLowerCase().includes(searchLower) ||
+        trial.description.toLowerCase().includes(searchLower) ||
+        trial.sponsor.toLowerCase().includes(searchLower) ||
+        (trial.nct_id && trial.nct_id.toLowerCase().includes(searchLower))
       );
     }
 
-    // Category filter
-    if (filters.category !== 'all') {
-      filtered = filtered.filter(trial => trial.category === filters.category);
-    }
+    return results;
+  }, [currentViewTrials, filters, searchTerm]);
 
-    // Status filter
-    if (filters.status !== 'all') {
-      filtered = filtered.filter(trial => trial.status === filters.status);
-    }
-
-    // Phase filter
-    if (filters.phase !== 'all') {
-      filtered = filtered.filter(trial => trial.clinical_status === filters.phase);
-    }
-
-    setFilteredTrials(filtered);
-  }, [trials, searchTerm, filters]); // ✅ Include all dependencies
-
+  // Reset pagination when filters or search changes
   useEffect(() => {
-    loadTrials();
-  }, []);
+    setCurrentPage(1);
+  }, [filters, searchTerm]);
 
-  useEffect(() => {
-    applyFilters();
-  }, [applyFilters]); // ✅ Now include applyFilters in dependencies
+  // Pagination logic - show 10 trials per page
+  const TRIALS_PER_PAGE = 10;
+  const paginatedTrials = useMemo(() => {
+    const startIndex = (currentPage - 1) * TRIALS_PER_PAGE;
+    const endIndex = startIndex + TRIALS_PER_PAGE;
+    return filteredTrials.slice(startIndex, endIndex);
+  }, [filteredTrials, currentPage]);
 
+  const totalPages = Math.ceil(filteredTrials.length / TRIALS_PER_PAGE);
+
+  const handleViewChange = (newView) => {
+    setViewType(newView);
+    setSearchTerm('');
+    setFilters(prev => ({
+      ...prev,
+      status: 'all',
+      sponsor: '',
+      location: ''
+    }));
+  };
+
+  const handleSearch = (e) => {
+    setSearchTerm(e.target.value);
+  };
+
+  // Handle ANY filter change - applies locally, no API call
   const handleFilterChange = (filterType, value) => {
     setFilters(prev => ({
       ...prev,
@@ -83,7 +272,6 @@ const ClinicalTrials = () => {
     }));
   };
 
-  // New: Toggle function for collapsible trials
   const handleToggle = (trialId) => {
     setExpandedTrials(prev => ({
       ...prev,
@@ -91,67 +279,71 @@ const ClinicalTrials = () => {
     }));
   };
 
+  const handleLearnMore = (trial) => {
+    window.open(trial.url, '_blank');
+  };
+
   const getStatusColor = (status) => {
     switch (status?.toLowerCase()) {
-      case 'open': return '#28a745';
-      case 'closed': return '#6c757d';
-      case 'pending': return '#ffc107';
+      case 'recruiting': return '#28a745';
+      case 'completed': return '#6c757d';
+      case 'not_yet_recruiting': return '#ffc107';
       default: return '#17a2b8';
     }
   };
 
   const getStatusLabel = (status) => {
-    switch (status?.toLowerCase()) {
-      case 'open': return 'Recruiting';
-      case 'closed': return 'Completed';
-      case 'pending': return 'Not Yet Recruiting';
-      default: return 'Active';
+    switch (status) {
+      case 'RECRUITING': return 'Recruiting';
+      case 'NOT_YET_RECRUITING': return 'Not Yet Recruiting';
+      default: return status || 'Active';
     }
   };
 
-  const getPhaseColor = (phase) => {
-    switch (phase?.toLowerCase()) {
-      case 'ongoing': return '#17a2b8';
-      case 'proven': return '#28a745';
-      case 'none': return '#6c757d';
-      default: return '#f8f9fa';
-    }
+  const resetFilters = () => {
+    setSearchTerm('');
+    setViewType('all');
+    setFilters({
+      domain: 'gut',
+      status: 'all',
+      sponsor: '',
+      location: ''
+    });
   };
 
-  const getPhaseLabel = (phase) => {
-    switch (phase?.toLowerCase()) {
-      case 'ongoing': return 'Phase II';
-      case 'proven': return 'Phase III';
-      case 'none': return 'Phase I';
-      default: return 'Phase';
-    }
-  };
-
-  const handleLearnMore = (trial) => {
-    const confirmed = window.confirm(
-      `You are being redirected to ClinicalTrials.gov. Continue?`
-    );
+  // Get unique locations from all trials in current view
+  const availableLocations = useMemo(() => {
+    const locations = new Set();
+    console.log(`📍 Extracting locations from ${currentViewTrials.length} trials`);
     
-    if (confirmed) {
-      window.open(
-        `https://clinicaltrials.gov/search?term=${encodeURIComponent(trial.trial_code || trial.name)}`,
-        '_blank'
-      );
-    }
-  };
-
-  const handleContact = (trial) => {
-    const confirmed = window.confirm(
-      `You are being redirected to contact the study team. Continue?`
-    );
+    currentViewTrials.forEach(trial => {
+      let countries = trial.countries || [];
+      
+      // Handle JSON string format
+      if (typeof countries === 'string') {
+        try {
+          countries = JSON.parse(countries);
+          console.log(`  Parsed countries from string: ${JSON.stringify(countries)}`);
+        } catch (e) {
+          console.log(`  Failed to parse countries string: ${countries}`);
+          countries = [];
+        }
+      }
+      
+      // Handle array format
+      if (Array.isArray(countries)) {
+        countries.forEach(country => {
+          if (country && country !== 'N/A' && country !== 'Unknown') {
+            locations.add(country);
+          }
+        });
+      }
+    });
     
-    if (confirmed) {
-      window.open(
-        `https://clinicaltrials.gov/search?term=${encodeURIComponent(trial.trial_code || trial.name)}`,
-        '_blank'
-      );
-    }
-  };
+    const result = Array.from(locations).sort();
+    console.log(`✅ Available locations: ${result.length} unique countries:`, result);
+    return result;
+  }, [currentViewTrials]);
 
   if (loading) {
     return (
@@ -178,13 +370,37 @@ const ClinicalTrials = () => {
                 <circle cx="12" cy="12" r="10"></circle>
                 <polyline points="12 6 12 12 16 14"></polyline>
               </svg>
-              Last updated: {user.lastUpdated}
+              Last updated: {new Date().toLocaleDateString()}
             </div>
           </div>
           <p className="clinical-trials-subtitle">
             Discover clinical trials and research studies in microbiome health and wellness. 
             Join cutting-edge research to advance scientific understanding while potentially improving your health.
           </p>
+        </div>
+
+        {/* View Type Selection */}
+        <div className="view-type-selector">
+          <button 
+            className={`view-btn ${viewType === 'all' ? 'active' : ''}`}
+            onClick={() => handleViewChange('all')}
+          >
+            All Trials
+          </button>
+          <button 
+            className={`view-btn ${viewType === 'domain' ? 'active' : ''}`}
+            onClick={() => handleViewChange('domain')}
+          >
+            By Domain
+          </button>
+          {user?.customer_id && (
+            <button 
+              className={`view-btn ${viewType === 'personalized' ? 'active' : ''}`}
+              onClick={() => handleViewChange('personalized')}
+            >
+              For You
+            </button>
+          )}
         </div>
 
         {/* Search and Filters */}
@@ -196,9 +412,9 @@ const ClinicalTrials = () => {
             </svg>
             <input
               type="text"
-              placeholder="Search trials by name, description, or sponsor..."
+              placeholder="Search trials by name, keyword, or sponsor..."
               value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
+              onChange={handleSearch}
             />
             {searchTerm && (
               <button className="clear-search" onClick={() => setSearchTerm('')}>
@@ -210,97 +426,122 @@ const ClinicalTrials = () => {
             )}
           </div>
 
+          {/* FILTER CONTROLS */}
           <div className="filter-controls">
-            <select 
-              value={filters.category} 
-              onChange={(e) => handleFilterChange('category', e.target.value)}
-            >
-              <option value="all">All Categories</option>
-              <option value="gut">Gut Health</option>
-              <option value="liver">Liver Health</option>
-              <option value="heart">Heart Health</option>
-              <option value="cognitive">Cognitive Health</option>
-              <option value="aging">Aging & Longevity</option>
-              <option value="skin">Skin Health</option>
-            </select>
+            {/* Domain Filter (only in domain view) */}
+            {viewType === 'domain' && (
+              <select 
+                value={filters.domain} 
+                onChange={(e) => handleFilterChange('domain', e.target.value)}
+                title="Filter by health domain"
+              >
+                <option value="gut">Gut Health</option>
+                <option value="liver">Liver Health</option>
+                <option value="heart">Heart Health</option>
+                <option value="cognitive">Cognitive Health</option>
+                <option value="aging">Aging & Longevity</option>
+                <option value="skin">Skin Health</option>
+              </select>
+            )}
 
+            {/* Status Filter */}
             <select 
               value={filters.status} 
               onChange={(e) => handleFilterChange('status', e.target.value)}
+              title="Filter by recruitment status"
             >
               <option value="all">All Status</option>
-              <option value="open">Recruiting</option>
-              <option value="closed">Completed</option>
-              <option value="pending">Not Yet Recruiting</option>
+              <option value="open">Open (Recruiting)</option>
+              <option value="pending">Pending (Not Yet Recruiting)</option>
+              <option value="closed">Closed</option>
             </select>
 
-            <select 
-              value={filters.phase} 
-              onChange={(e) => handleFilterChange('phase', e.target.value)}
+            {/* Sponsor Filter */}
+            <select
+              value={filters.sponsor}
+              onChange={(e) => handleFilterChange('sponsor', e.target.value)}
+              title="Filter by trial sponsor"
             >
-              <option value="all">All Phases</option>
-              <option value="ongoing">Phase II</option>
-              <option value="proven">Phase III</option>
-              <option value="none">Phase I</option>
+              <option value="">All Sponsors</option>
+              {availableFilters.sponsors.map(sponsor => (
+                <option key={sponsor} value={sponsor}>
+                  {sponsor}
+                </option>
+              ))}
             </select>
+
+            {/* Location Filter - Dropdown */}
+            <select
+              value={filters.location}
+              onChange={(e) => handleFilterChange('location', e.target.value)}
+              title="Filter by trial location/country"
+            >
+              <option value="">All Locations</option>
+              {availableLocations.map(location => (
+                <option key={location} value={location}>
+                  {location}
+                </option>
+              ))}
+            </select>
+
+            {/* Reset Button */}
+            <button 
+              className="reset-filters-btn"
+              onClick={resetFilters}
+              title="Reset all filters to default"
+            >
+              Reset Filters
+            </button>
           </div>
         </div>
 
         {/* Results Summary */}
         <div className="results-summary">
-          <p>Showing {filteredTrials.length} of {trials.length} clinical trials</p>
+          <p>Showing <strong>{filteredTrials.length}</strong> clinical trials (of {currentViewTrials.length} total in {viewType === 'domain' ? filters.domain : viewType} view)</p>
+          {viewType === 'personalized' && (
+            <p className="personalization-note">✨ Personalized based on your health profile</p>
+          )}
+          {Object.values(filters).some(f => f !== 'all' && f !== 0 && f !== 999999 && f !== '') && (
+            <p className="filters-applied-note">🔍 {Object.entries(filters).filter(([, v]) => v !== 'all' && v !== 0 && v !== 999999 && v !== '').length} filter(s) applied</p>
+          )}
         </div>
 
         {/* Trials List */}
         <div className="trials-grid">
-          {filteredTrials.length > 0 ? filteredTrials.map((trial) => {
-            const isExpanded = expandedTrials[trial.trial_id] || false;
+          {paginatedTrials.length > 0 ? paginatedTrials.map((trial) => {
+            const isExpanded = expandedTrials[trial.nct_id] || false;
             
             return (
-              <div key={trial.trial_id} className="trial-card">
+              <div key={trial.nct_id} className="trial-card">
                 {/* Clickable Header */}
                 <div 
                   className="trial-header-clickable"
-                  onClick={() => handleToggle(trial.trial_id)}
+                  onClick={() => handleToggle(trial.nct_id)}
                 >
                   <div className="trial-header-content">
                     <div className="trial-title-info">
                       <h3 className="trial-title">{trial.name}</h3>
                       <div className="trial-meta">
                         <span 
-                          className="trial-phase"
-                          style={{ 
-                            backgroundColor: getPhaseColor(trial.clinical_status),
-                            color: trial.clinical_status?.toLowerCase() === 'none' ? '#495057' : 'white'
-                          }}
-                        >
-                          {getPhaseLabel(trial.clinical_status)}
-                        </span>
-                        <span 
                           className="trial-status"
                           style={{ backgroundColor: getStatusColor(trial.status) }}
                         >
                           {getStatusLabel(trial.status)}
                         </span>
-                        <span className="trial-duration">{trial.duration}</span>
+                        <span className="trial-duration">{trial.duration || 'N/A'}</span>
+                        <span className="trial-nct">{trial.nct_id}</span>
                       </div>
                     </div>
                     
                     <div className="trial-participation">
                       <div className="participation-info">
                         <span className="participants-count">
-                          {trial.participants || 0} / {trial.max_participants || 0}
+                          {trial.enrollment !== undefined && trial.enrollment !== null && trial.enrollment > 0
+                            ? `${trial.enrollment.toLocaleString()} participants`
+                            : 'Enrollment N/A'}
                         </span>
-                        <span className="participants-label">Participants</span>
+                        <span className="participants-label">Target Enrollment</span>
                       </div>
-                      {trial.completion_percentage !== undefined && (
-                        <div className="completion-bar">
-                          <div 
-                            className="completion-fill"
-                            style={{ width: `${trial.completion_percentage}%` }}
-                          ></div>
-                        </div>
-                      )}
                     </div>
                     
                     <div className={`trial-arrow ${isExpanded ? 'expanded' : ''}`}>
@@ -314,11 +555,20 @@ const ClinicalTrials = () => {
                   <div className="trial-expanded-content">
                     <p className="trial-description">{trial.description}</p>
                     
-                    {trial.key_findings && (
-                      <div className="trial-findings">
-                        <strong>Key Findings:</strong> {trial.key_findings}
+                    <div className="trial-details">
+                      <div className="detail-group">
+                        <strong>Conditions:</strong>
+                        <p>{safeJoin(trial.conditions)}</p>
                       </div>
-                    )}
+                      <div className="detail-group">
+                        <strong>Interventions:</strong>
+                        <p>{safeJoin(trial.interventions)}</p>
+                      </div>
+                      <div className="detail-group">
+                        <strong>Locations:</strong>
+                        <p>{safeJoin(trial.countries)}</p>
+                      </div>
+                    </div>
                     
                     <div className="trial-footer">
                       <div className="trial-info">
@@ -327,17 +577,8 @@ const ClinicalTrials = () => {
                             <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
                             <circle cx="12" cy="7" r="4"/>
                           </svg>
-                          {trial.vendor}
+                          {trial.sponsor || 'N/A'}
                         </div>
-                        {trial.publication && (
-                          <div className="publication-info">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
-                              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
-                            </svg>
-                            {trial.publication}
-                          </div>
-                        )}
                       </div>
                       <div className="trial-actions">
                         <button 
@@ -347,16 +588,7 @@ const ClinicalTrials = () => {
                             handleLearnMore(trial);
                           }}
                         >
-                          Learn More
-                        </button>
-                        <button 
-                          className="contact-btn"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleContact(trial);
-                          }}
-                        >
-                          Contact Study Team
+                          View on ClinicalTrials.gov
                         </button>
                       </div>
                     </div>
@@ -367,15 +599,77 @@ const ClinicalTrials = () => {
           }) : (
             <div className="no-results">
               <p>No clinical trials found matching your criteria.</p>
-              <button onClick={() => {
-                setSearchTerm('');
-                setFilters({ category: 'all', status: 'all', phase: 'all' });
-              }}>
-                Clear all filters
+              <button onClick={resetFilters}>
+                Reset Filters
               </button>
             </div>
           )}
         </div>
+
+        {/* Pagination Controls */}
+        {filteredTrials.length > 0 && (
+          <div className="pagination-container">
+            <div className="pagination-info">
+              Showing {(currentPage - 1) * TRIALS_PER_PAGE + 1} - {Math.min(currentPage * TRIALS_PER_PAGE, filteredTrials.length)} of {filteredTrials.length} trials
+            </div>
+            <div className="pagination-controls">
+              <button 
+                className="pagination-btn"
+                onClick={() => setCurrentPage(currentPage - 1)}
+                disabled={currentPage === 1}
+              >
+                ← Previous
+              </button>
+              
+              <div className="pagination-numbers">
+                {/* Smart pagination: show first 3, ellipsis if needed, then last page */}
+                {Array.from({ length: totalPages }, (_, i) => i + 1).map((page, idx, arr) => {
+                  // Always show first 3 pages
+                  if (page <= 3) {
+                    return (
+                      <button
+                        key={page}
+                        className={`page-number ${currentPage === page ? 'active' : ''}`}
+                        onClick={() => setCurrentPage(page)}
+                      >
+                        {page}
+                      </button>
+                    );
+                  }
+                  // Show ellipsis before last pages if there's a gap
+                  if (page === 4 && totalPages > 6) {
+                    return <span key="ellipsis" className="pagination-ellipsis">...</span>;
+                  }
+                  // Skip middle pages if totalPages > 6
+                  if (page > 3 && page < totalPages - 2 && totalPages > 6) {
+                    return null;
+                  }
+                  // Always show last 3 pages
+                  if (page > totalPages - 3) {
+                    return (
+                      <button
+                        key={page}
+                        className={`page-number ${currentPage === page ? 'active' : ''}`}
+                        onClick={() => setCurrentPage(page)}
+                      >
+                        {page}
+                      </button>
+                    );
+                  }
+                  return null;
+                })}
+              </div>
+
+              <button 
+                className="pagination-btn"
+                onClick={() => setCurrentPage(currentPage + 1)}
+                disabled={currentPage === totalPages}
+              >
+                Next →
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
