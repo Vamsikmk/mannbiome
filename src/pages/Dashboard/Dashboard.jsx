@@ -2,6 +2,7 @@
 import React, { useState } from 'react';
 import { useAppContext } from '../../context';
 import Gauge from '../../components/Charts/Gauge';
+import UploadReport from '../../components/UploadReport/UploadReport';
 import './Dashboard.css';
 
 const Dashboard = () => {
@@ -135,6 +136,9 @@ const Dashboard = () => {
           Last updated: {user.lastUpdated}
         </div>
       </div>
+
+      {/* Upload Report Section */}
+      <UploadReport />
       
       <div className="analysis-layout">
         <div className="analysis-card">
