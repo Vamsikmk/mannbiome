@@ -30,5 +30,8 @@ pdfplumber>=0.10.0
 pandas>=2.0.0
 numpy>=1.24.0
 
+# Microbiome diversity calculations
+scikit-bio>=0.5.9
+
 # For AWS Lambda deployment (optional, we'll add this later)
 # mangum==0.17.0
