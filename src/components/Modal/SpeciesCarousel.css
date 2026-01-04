@@ -1,13 +1,13 @@
-/* SpeciesCarousel.css - Enhanced Mobile Compatibility */
+/* SpeciesCarousel.css - Vertical Paginated List */
 
-/* ================================
-   EXISTING STYLES (Keep all your current styles)
-   ================================ */
+/* Main container */
+.species-carousel-container {
+  width: 100%;
+  max-width: 100%;
+}
 
-/* Main carousel container */
 .species-carousel {
   position: relative;
-  overflow: hidden;
   background: white;
   border-radius: 16px;
   padding: 24px;
@@ -15,70 +15,7 @@
   box-shadow: 0 1px 3px rgba(0,0,0,0.1);
 }
 
-.species-carousel-container {
-  width: 100%;
-  max-width: 100%;
-}
-
-/* Carousel structure */
-.carousel {
-  position: relative;
-  overflow: hidden;
-  width: 100%;
-}
-
-.carousel-track {
-  display: flex;
-  transition: transform 0.5s cubic-bezier(0.4, 0, 0.2, 1);
-  width: 100%;
-}
-
-.carousel-slide {
-  min-width: 100%;
-  padding: 0 15px;
-  box-sizing: border-box;
-  flex-shrink: 0;
-}
-
-/* Species card styling */
-.species-card {
-  background: #f8f9fa;
-  border-radius: 12px;
-  padding: 20px;
-  min-height: 400px;
-  width: 100%;
-  box-sizing: border-box;
-}
-
-.species-title {
-  font-size: 20px;
-  color: #00BFA5;
-  margin-bottom: 20px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 12px;
-  font-weight: 600;
-}
-
-.status-badge {
-  font-size: 16px;
-  font-weight: 600;
-  color: #00BFA5;
-  white-space: nowrap;
-}
-
-/* Species grid layout - Enhanced for mobile */
-.species-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 20px;
-  margin-bottom: 20px;
-  width: 100%;
-}
-
-/* Individual species item - Enhanced for mobile */
+/* Individual species item */
 .species-item {
   background: white;
   border-radius: 8px;
@@ -97,7 +34,7 @@
   border-color: #00BFA5;
 }
 
-/* Species header - Enhanced for mobile */
+/* Species header */
 .species-header {
   display: flex;
   justify-content: space-between;
@@ -116,6 +53,32 @@
   line-height: 1.3;
   word-break: break-word;
   hyphens: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.species-name-link {
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  font-size: 14px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+
+.species-name-link:hover {
+  background-color: rgba(0, 191, 165, 0.15);
+  transform: scale(1.15);
+}
+
+.species-name-link:active {
+  transform: scale(0.95);
 }
 
 .species-status {
@@ -131,7 +94,7 @@
   flex-shrink: 0;
 }
 
-/* Species metrics - Enhanced for mobile */
+/* Species metrics */
 .species-metrics {
   margin-bottom: 12px;
 }
@@ -162,7 +125,7 @@
   word-break: break-all;
 }
 
-/* Progress bar styling - Enhanced for mobile */
+/* Progress bar */
 .species-progress {
   margin-top: 12px;
 }
@@ -205,40 +168,6 @@
   font-size: 10px;
   color: #999;
   margin-top: 4px;
-}
-
-/* Carousel dots - Enhanced for mobile */
-.carousel-dots {
-  display: flex;
-  justify-content: center;
-  gap: 8px;
-  margin: 20px 0 0 0;
-  padding: 10px 0;
-  flex-wrap: wrap;
-}
-
-.dot {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: #ddd;
-  cursor: pointer;
-  transition: all 0.3s ease;
-  border: 2px solid transparent;
-  touch-action: manipulation;
-  min-width: 12px;
-  min-height: 12px;
-}
-
-.dot:hover {
-  background: #009688;
-  transform: scale(1.1);
-}
-
-.dot.active {
-  background: #00BFA5;
-  border-color: #00BFA5;
-  box-shadow: 0 0 0 3px rgba(0, 191, 165, 0.2);
 }
 
 /* Confidence Tooltip - Mobile Enhanced */
@@ -972,4 +901,157 @@
 .priority-badge.low {
   background-color: #6c757d;
   color: white;
+}
+
+/* ================================
+   MICROBEWIKI LINK BUTTON
+   ================================ */
+.species-link {
+  margin-top: 16px;
+  display: flex;
+  justify-content: center;
+}
+
+.microbewiki-link-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  background: linear-gradient(135deg, #00BFA5 0%, #00897B 100%);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  transition: all 0.3s ease;
+  box-shadow: 0 2px 8px rgba(0, 191, 165, 0.3);
+  text-decoration: none;
+}
+
+.microbewiki-link-btn:hover {
+  background: linear-gradient(135deg, #00897B 0%, #00695C 100%);
+  box-shadow: 0 4px 12px rgba(0, 191, 165, 0.4);
+  transform: translateY(-2px);
+}
+
+.microbewiki-link-btn:active {
+  transform: translateY(0);
+  box-shadow: 0 2px 6px rgba(0, 191, 165, 0.3);
+}
+
+.microbewiki-link-btn span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ================================
+   VERTICAL LIST LAYOUT (New)
+   ================================ */
+
+/* Category section wrapper */
+.species-category-section {
+  margin-bottom: 32px;
+  background: #f8f9fa;
+  border-radius: 12px;
+  padding: 20px;
+  border: 1px solid #e9ecef;
+}
+
+/* Category header */
+.species-category-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+  padding-bottom: 12px;
+  border-bottom: 2px solid #e9ecef;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.species-category-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: #00BFA5;
+  flex: 1;
+  min-width: 200px;
+}
+
+.species-category-status {
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* Vertical list of species items */
+.species-vertical-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+/* Override species-item for vertical list */
+.species-vertical-list .species-item {
+  background: white;
+  border-radius: 8px;
+  padding: 16px;
+  border: 1px solid #e9ecef;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  transition: all 0.3s ease;
+}
+
+.species-vertical-list .species-item:hover {
+  box-shadow: 0 4px 12px rgba(0, 191, 165, 0.15);
+  transform: translateY(-2px);
+}
+
+/* Pagination controls */
+.species-pagination {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 16px;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid #e9ecef;
+}
+
+.pagination-btn {
+  padding: 8px 16px;
+  background: linear-gradient(135deg, #00BFA5 0%, #00897B 100%);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  transition: all 0.3s ease;
+  min-width: 100px;
+}
+
+.pagination-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, #00897B 0%, #00695C 100%);
+  box-shadow: 0 4px 12px rgba(0, 191, 165, 0.4);
+  transform: translateY(-2px);
+}
+
+.pagination-btn:disabled {
+  background: #ccc;
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.pagination-info {
+  font-size: 13px;
+  font-weight: 600;
+  color: #495057;
+  min-width: 120px;
+  text-align: center;
 }

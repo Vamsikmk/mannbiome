@@ -2,6 +2,7 @@
 import React, { useState } from 'react';
 import { useAppContext } from '../../context';
 import Gauge from '../../components/Charts/Gauge';
+import UploadReport from '../../components/UploadReport/UploadReport';
 import './Dashboard.css';
 
 const Dashboard = () => {
@@ -15,6 +16,27 @@ const Dashboard = () => {
       return 0;
     }
     return Number(Number(score).toFixed(1)); // Ensure it's a number for the Gauge
+  };
+
+  // Format date as "Dec 26, 2025 12:30 PM"
+  const formatLastUpdated = (dateString) => {
+    if (!dateString) return 'N/A';
+    
+    try {
+      const date = new Date(dateString);
+      const options = { 
+        year: 'numeric', 
+        month: 'short', 
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+      };
+      return date.toLocaleString('en-US', options);
+    } catch (error) {
+      console.error('Error formatting date:', error);
+      return dateString;
+    }
   };
 
   // Get diversity score - check both overall domain and top-level
@@ -132,9 +154,12 @@ const Dashboard = () => {
             <circle cx="12" cy="12" r="10"></circle>
             <polyline points="12 6 12 12 16 14"></polyline>
           </svg>
-          Last updated: {user.lastUpdated}
+          Last updated: {formatLastUpdated(healthData.last_updated)}
         </div>
       </div>
+
+      {/* Upload Report Section */}
+      <UploadReport />
       
       <div className="analysis-layout">
         <div className="analysis-card">

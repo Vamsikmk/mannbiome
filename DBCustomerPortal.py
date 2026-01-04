@@ -1,7 +1,7 @@
 # db-customer-portal.py
 # Combined API: Customer Portal (microbiome/public) + Domain (vectordb schema)
 # FastAPI single app, single Postgres DB (mannbiome). No mocks. Clear HTTP errors.
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, Session
@@ -9,6 +9,9 @@ from typing import Dict, List, Tuple, Any, Optional
 from datetime import datetime, date
 import os
 from dotenv import load_dotenv
+from pathlib import Path
+import shutil
+import pandas as pd
 
 # Load environment variables from .env file
 load_dotenv()
@@ -32,11 +35,148 @@ import traceback
 # Import the cached recommendation service
 from llm_recommendations_cached import CachedRecommendationService
 
+# ============================================================================
+# CLINICAL TRIALS SYNONYM DICTIONARY - Domain-Specific Matching
+# ============================================================================
+CLINICAL_TRIALS_SYNONYMS = {
+    "gut": {
+        "core_terms": [
+            "gut health", "gastrointestinal health", "digestive health", "intestinal health"
+        ],
+        "microbiome_focused": [
+            "gut microbiome", "gut dysbiosis", "microbiota modulation", 
+            "fecal microbiota transplantation", "fmt", "probiotics", "prebiotics", 
+            "synbiotics", "postbiotics"
+        ],
+        "disease_specific": [
+            "irritable bowel syndrome", "ibs", "inflammatory bowel disease", "ibm",
+            "crohn's disease", "ulcerative colitis", "functional gastrointestinal disorders",
+            "small intestinal bacterial overgrowth", "sibo"
+        ]
+    },
+    "liver": {
+        "core_terms": [
+            "liver", "liver health", "hepatic health", "liver function", "hepatic function"
+        ],
+        "metabolic_inflammatory": [
+            "non-alcoholic fatty liver disease", "nafld", "metabolic dysfunction-associated fatty liver disease",
+            "mafld", "non-alcoholic steatohepatitis", "nash", "hepatic steatosis", 
+            "liver fibrosis", "hepatic inflammation"
+        ],
+        "cancer_severe": [
+            "hepatocellular carcinoma", "hcc", "liver cirrhosis", "chronic liver disease"
+        ]
+    },
+    "cognitive": {
+        "core_terms": [
+            "brain health", "cognitive health", "neurocognitive function"
+        ],
+        "neurodegeneration": [
+            "alzheimer's disease", "mild cognitive impairment", "mci", "dementia", 
+            "parkinson's disease"
+        ],
+        "mental_health": [
+            "depression", "anxiety disorders", "major depressive disorder", "mood disorders"
+        ],
+        "cognitive_outcomes": [
+            "memory function", "executive function", "attention", "learning"
+        ]
+    },
+    "kidney": {
+        "core_terms": [
+            "kidney health", "renal health", "renal function"
+        ],
+        "disease_specific": [
+            "chronic kidney disease", "ckd", "acute kidney injury", "aki", 
+            "diabetic nephropathy", "hypertensive nephropathy"
+        ],
+        "gut_kidney_axis": [
+            "gut-kidney axis", "microbiome-derived uremic toxins"
+        ]
+    },
+    "cardiometabolic": {
+        "core_terms": [
+            "cardiovascular health", "cardiometabolic health", "metabolic health"
+        ],
+        "disease_specific": [
+            "type 2 diabetes", "type 2 diabetes mellitus", "insulin resistance", 
+            "metabolic syndrome", "obesity", "dyslipidemia", "hypertension"
+        ],
+        "microbiome_links": [
+            "microbiome and metabolism", "scfa metabolism", "tmao"
+        ]
+    },
+    "intervention": {
+        "all_domains": [
+            "probiotic supplementation", "probiotics", "prebiotics", "synbiotics", "nutraceutical",
+            "synbiotic therapy", "microbiome-targeted therapy", "microbiome modulation",
+            "precision nutrition", "fecal microbiota transplantation", "fmt"
+        ]
+    }
+}
 
+# Flatten all synonyms for quick access
+def _get_all_domain_synonyms(domain: str, include_interventions: bool = False) -> List[str]:
+    """
+    Get all synonyms for a specific domain (case-insensitive)
+    
+    Args:
+        domain: Health domain name
+        include_interventions: If True, include universal intervention terms.
+                              For domain-specific endpoints, should be False.
+                              For cross-domain searches, should be True.
+    """
+    domain_lower = domain.lower()
+    
+    # Map aliases
+    domain_map = {
+        "gut": "gut",
+        "heart": "cardiometabolic",
+        "cardiovascular": "cardiometabolic",
+        "brain": "cognitive",
+        "neuro": "cognitive",
+        "kidney": "kidney",
+        "renal": "kidney",
+        "liver": "liver",
+        "hepatic": "liver"
+    }
+    
+    domain_key = domain_map.get(domain_lower, domain_lower)
+    synonyms = []
+    
+    if domain_key in CLINICAL_TRIALS_SYNONYMS:
+        for category, terms in CLINICAL_TRIALS_SYNONYMS[domain_key].items():
+            synonyms.extend(terms)
+    
+    # Only add intervention terms if explicitly requested
+    if include_interventions and domain_key != "intervention":
+        synonyms.extend(CLINICAL_TRIALS_SYNONYMS["intervention"]["all_domains"])
+    
+    return [s.lower() for s in synonyms]
 
-# -----------------------------------------------------------------------------
+def _matches_any_synonym(title: str, synonyms: List[str]) -> bool:
+    """Check if trial title matches any synonym (case-insensitive, partial match)"""
+    title_lower = title.lower()
+    for synonym in synonyms:
+        if synonym in title_lower:
+            return True
+    return False
+
+def _filter_trials_by_title_only(trials: List[Dict], query_terms: List[str]) -> List[Dict]:
+    """
+    Filter trials by title only, using OR logic across all query terms
+    Returns only trials where ANY query term matches in the TITLE field
+    """
+    filtered = []
+    for trial in trials:
+        title = trial.get('title', '').lower()
+        if any(term.lower() in title for term in query_terms):
+            filtered.append(trial)
+    return filtered
+
+# ============================================================================
 # App
-# -----------------------------------------------------------------------------
+# ============================================================================
 app = FastAPI(title="MannBiome API (Portal + Domain)", version="1.0.0")
 
 
@@ -153,24 +293,99 @@ def _format_date(d: Optional[date]) -> Optional[str]:
 def _fetch_domain_scores_for_customer(customer_id: int, db: Session):
     """
     Returns a dict keyed by domain_id (int) with fields: score, diversity, status.
-    Pulls the latest report per domain for this customer from domain_reports.
+    Pulls the latest domain scores for this customer from patient_domain_scores.
+    
+    Score Calculation:
+    - Converts total_impact (can be negative) to a normalized 1-5 scale
+    - Based on ratio of positive vs negative bacteria
+    - Higher positive bacteria = higher score
+    
+    Diversity Calculation:
+    - Uses bacteria_count but normalized to 1-5 scale
+    - Represents actual bacterial diversity in the domain
     """
+    # Mapping from string domain names (in database) to integer domain IDs (expected by frontend)
+    DOMAIN_NAME_TO_ID = {
+        'gut': 1,
+        'gut_health': 1,
+        'liver': 2,
+        'liver_health': 2,
+        'heart': 3,
+        'heart_health': 3,
+        'cardiovascular': 3,
+        'skin': 4,
+        'skin_health': 4,
+        'cognitive': 5,
+        'cognitive_health': 5,
+        'brain': 5,
+        'aging': 6,
+        'anti_aging': 6,
+        'longevity': 6
+    }
+    
     rows = db.execute(text("""
-        SELECT DISTINCT ON (dr.domain_id)
-               dr.domain_id, dr.score, dr.diversity, dr.status, hr.created_at
-        FROM microbiome.domain_reports dr
-        JOIN microbiome.health_reports hr ON dr.report_id = hr.report_id
-        WHERE hr.customer_id = :cid
-        ORDER BY dr.domain_id, hr.created_at DESC
-    """), {"cid": customer_id}).fetchall()
+        SELECT DISTINCT ON (pds.domain)
+               pds.domain as domain_name,
+               pds.total_impact as raw_impact,
+               pds.bacteria_count as total_associations,
+               pds.positive_bacteria as positive_count,
+               pds.negative_bacteria as negative_count,
+               pds.health_status as status,
+               pr.created_at
+        FROM public.patient_domain_scores pds
+        JOIN public.patient_reports pr ON pds.upload_id = pr.upload_id
+        WHERE pr.participant_id = :cid
+        ORDER BY pds.domain, pr.created_at DESC
+    """), {"cid": str(customer_id)}).fetchall()
 
+    print(f"🔍 DEBUG: Fetched {len(rows)} domain score rows for customer {customer_id}")
+    
     by_domain = {}
     for r in rows:
-        by_domain[int(r.domain_id)] = {
-            "score": float(r.score),
-            "diversity": float(r.diversity),
-            "status": str(r.status)
-        }
+        domain_name = str(r.domain_name).lower().strip()
+        domain_id = DOMAIN_NAME_TO_ID.get(domain_name)
+        
+        print(f"   Domain: {domain_name} -> ID: {domain_id} | +ve: {r.positive_count} | -ve: {r.negative_count} | assoc: {r.total_associations}")
+        
+        if domain_id:
+            # Get raw values
+            positive = float(r.positive_count) if r.positive_count is not None else 0
+            negative = float(r.negative_count) if r.negative_count is not None else 0
+            bacteria_count = float(r.total_associations) if r.total_associations is not None else 0
+            
+            # Calculate score based on positive/negative ratio
+            # If both are 0, we don't have this data, so use a heuristic
+            total_bacteria = positive + negative
+            if total_bacteria > 0:
+                # We have positive/negative data
+                positive_ratio = positive / total_bacteria
+                # Normalize to 1-5 scale
+                normalized_score = 1.0 + (positive_ratio * 4.0)
+            else:
+                # No positive/negative data - use bacteria_count as proxy
+                # Assume more bacteria = healthier (up to a point)
+                # Score formula: normalized to 1-5 scale
+                if bacteria_count > 0:
+                    # More bacteria = better, but with diminishing returns
+                    import math
+                    log_factor = math.log10(bacteria_count + 1) / 2.0  # log scale
+                    # Scale: 2.5 baseline + log bonus, capped at 4.0
+                    normalized_score = min(4.0, 2.5 + log_factor)
+                else:
+                    normalized_score = 2.5
+            
+            # Calculate diversity score using bacteria_count
+            # This represents the number of unique bacteria-domain associations
+            # Normalized to 1-5 scale
+            diversity_score = min(5.0, 1.0 + (bacteria_count / 20.0))
+            
+            print(f"      -> Score: {normalized_score:.1f}, Diversity: {diversity_score:.1f}, Bacteria: {bacteria_count}")
+            
+            by_domain[domain_id] = {
+                "score": round(normalized_score, 1),
+                "diversity": round(diversity_score, 1),
+                "status": str(r.status) if r.status else "unknown"
+            }
     return by_domain
 
 
@@ -239,26 +454,48 @@ def calculate_bacteria_status(abundance: float, evidence_strength: str, category
     return "normal"
 
 def calculate_overall_health_score(bact: List[Dict]) -> Dict[str, float]:
+    """
+    Calculate overall health scores on a 1-5 scale.
+    
+    Score calculation:
+    - Based on ratio of beneficial bacteria in good status
+    - Penalized by pathogenic bacteria in high concern status
+    - Range: 1-5 (higher is better)
+    
+    Diversity calculation:
+    - Based on total number of detected bacteria
+    - Normalized to 1-5 scale
+    """
     try:
         if not bact:
-            return {"overall_score": 3.0, "diversity_score": 2.5}
+            return {"overall_score": 2.5, "diversity_score": 2.5}
+        
+        # Count bacteria categories
         bg = len([b for b in bact if b["category"]=="beneficial" and b["status"]=="good"])
         bt = len([b for b in bact if b["category"]=="beneficial"])
         ph = len([b for b in bact if b["category"]=="pathogenic" and b["status"]=="high"])
         pt = len([b for b in bact if b["category"]=="pathogenic"])
         total = len(bact)
-        beneficial_ratio = (bg / bt) if bt else 0.0
+        
+        # Calculate ratios
+        beneficial_ratio = (bg / bt) if bt else 0.5  # Default to neutral if no beneficial
         pathogenic_concern = (ph / pt) if pt else 0.0
-        diversity = min(5.0, 2.0 + (total / 10.0))
-        if(diversity==5):
-            diversity=3.3
-        base = 3.0 + (beneficial_ratio * 1.5) - (pathogenic_concern * 1.5)
+        
+        # Calculate overall score (1-5 scale)
+        # Start at 2.5 (neutral), add for beneficial, subtract for pathogenic
+        base_score = 2.5 + (beneficial_ratio * 2.0) - (pathogenic_concern * 2.0)
+        overall_score = max(1.0, min(5.0, base_score))
+        
+        # Calculate diversity score (1-5 scale)
+        # More bacteria = higher diversity (cap at 5)
+        diversity_score = min(5.0, 1.0 + (total / 20.0))
+        
         return {
-            "overall_score": round(max(1.0, min(5.0, base)), 1),
-            "diversity_score": round(max(1.0, min(5.0, diversity)), 1),
+            "overall_score": round(overall_score, 1),
+            "diversity_score": round(diversity_score, 1),
         }
     except Exception:
-        return {"overall_score": 3.0, "diversity_score": 2.5}
+        return {"overall_score": 2.5, "diversity_score": 2.5}
 
 def group_bacteria_for_carousel(bacteria_analysis: List[Dict]) -> Dict:
     print(f"🔍 group_bacteria_for_carousel received {len(bacteria_analysis)} bacteria")
@@ -305,7 +542,8 @@ def group_bacteria_for_carousel(bacteria_analysis: List[Dict]) -> Dict:
                 "measurement_unit": "relative_abundance_fraction",
                 "is_beneficial": cat == "beneficial",
                 "range_fill_width": range_fill,
-                "marker_position": marker
+                "marker_position": marker,
+                "microbewiki_url": b.get("microbewiki_url")
             }
             carousel_groups[target]["species"].append(species_data)
         print(f"🔍 Final carousel groups: {[(k, len(v['species'])) for k, v in carousel_groups.items()]}")
@@ -391,17 +629,28 @@ def get_microbiome_data(customer_id: int, db: Session = Depends(get_db)):
         analysis = []
         for item in bacteria_data:
             name = (item or {}).get("bacteria_name","").strip()
-            abundance = float((item or {}).get("abundance",0))
+            # Support both "abundance" and "relative_abundance" fields
+            abundance = float((item or {}).get("relative_abundance") or (item or {}).get("abundance") or 0)
             ev = (item or {}).get("evidence_strength","C")
             msp_id = (item or {}).get("msp_id","")
             units = (item or {}).get("units","relative_abundance_fraction")
+            wiki_url = (item or {}).get("microbewiki_url")
             cat = categorize_bacteria_by_name(name)
-            pct = convert_abundance_to_percentage(abundance)
+            
+            # Check if abundance is already a percentage (>1) or a fraction (0-1)
+            # New upload feature stores as percentage (10.61), old data as fraction (0.1061)
+            if abundance > 1.0:
+                # Already a percentage
+                pct = round(abundance, 2)
+            else:
+                # Fractional abundance, convert to percentage
+                pct = convert_abundance_to_percentage(abundance)
+            
             status = calculate_bacteria_status(abundance, ev, cat)
             analysis.append({
                 "bacteria_name": name, "msp_id": msp_id, "abundance": abundance,
                 "percentage": pct, "evidence_strength": ev, "category": cat,
-                "status": status, "units": units
+                "status": status, "units": units, "microbewiki_url": wiki_url
             })
         scores = calculate_overall_health_score(analysis)
         grouped = group_bacteria_for_carousel(analysis)
@@ -425,6 +674,194 @@ def get_microbiome_data(customer_id: int, db: Session = Depends(get_db)):
 @app.get("/api/customer/{customer_id}/microbiome-data", tags=["Portal"])
 def get_customer_microbiome_data_frontend(customer_id: int, db: Session = Depends(get_db)):
     return get_microbiome_data(customer_id, db)
+
+# -----------------------------------------------------------------------------
+# PATIENT REPORT UPLOAD ENDPOINT
+# -----------------------------------------------------------------------------
+@app.post("/api/customer/{customer_id}/upload-report", tags=["Portal"])
+async def upload_patient_report(
+    customer_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    """
+    Upload and process a patient PDF report.
+    
+    - Validates customer exists
+    - Saves PDF to local storage (S3-compatible path structure)
+    - Parses bacteria data from PDF
+    - Scores bacteria across 8 health domains
+    - Stores results in database
+    - Returns processing results immediately (synchronous)
+    """
+    try:
+        # Step 1: Validate customer exists
+        result = db.execute(
+            text("SELECT customer_id, user_id FROM customers.customer WHERE customer_id = :cid"),
+            {"cid": customer_id}
+        )
+        customer = result.fetchone()
+        
+        if not customer:
+            raise HTTPException(status_code=404, detail=f"Customer {customer_id} not found")
+        
+        # Step 2: Validate file is PDF
+        if not file.filename.endswith('.pdf'):
+            raise HTTPException(status_code=400, detail="Only PDF files are supported")
+        
+        # Step 3: Create customer-specific upload directory (S3-compatible structure)
+        upload_base = os.getenv("UPLOAD_BASE_PATH", "./uploads")
+        customer_dir = Path(upload_base) / str(customer_id)
+        customer_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Generate filename with timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        pdf_filename = f"report_{timestamp}.pdf"
+        pdf_path = customer_dir / pdf_filename
+        
+        # Step 4: Save PDF to local storage
+        with open(pdf_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        
+        # Step 5: Import processing pipeline
+        from src.patient_processing.patient_report_parser import PatientReportParser
+        from src.patient_processing.bacteria_scorer import BacteriaScorer
+        from src.patient_processing.patient_data_inserter import PatientDataInserter
+        
+        # Step 6: Parse PDF - returns DataFrame
+        parser = PatientReportParser()
+        bacteria_df = parser.parse_report(str(pdf_path))
+        
+        if bacteria_df is None or bacteria_df.empty:
+            raise HTTPException(
+                status_code=400, 
+                detail="Failed to extract bacteria data from PDF. Please ensure the PDF is in the correct format."
+            )
+        
+        # Step 7: Score bacteria across domains - expects DataFrame, returns DataFrame with scored bacteria
+        scorer = BacteriaScorer()
+        scoring_results = scorer.score_patient_bacteria(bacteria_df)
+        
+        # Check if scoring was successful
+        if scoring_results is None or scoring_results.empty:
+            # No bacteria were matched to domains, but we can still save the raw bacteria
+            domain_scores_df = pd.DataFrame(columns=['domain', 'domain_score', 'bacteria_count'])
+        else:
+            # Step 8: Calculate domain scores from scored bacteria
+            domain_scores_df = scoring_results.groupby('domain').agg({
+                'impact_score': 'mean',
+                'bacteria_name': 'count'
+            }).rename(columns={'impact_score': 'domain_score', 'bacteria_name': 'bacteria_count'}).reset_index()
+        
+        # Step 9: Check if customer already has a report (overwrite)
+        existing_check = db.execute(
+            text("SELECT upload_id FROM public.patient_reports WHERE participant_id = :pid"),
+            {"pid": str(customer_id)}
+        )
+        existing_report = existing_check.fetchone()
+        
+        if existing_report:
+            # Delete existing report and related data
+            db.execute(
+                text("DELETE FROM public.patient_bacteria_scores WHERE participant_id = :pid"),
+                {"pid": str(customer_id)}
+            )
+            db.execute(
+                text("DELETE FROM public.patient_domain_scores WHERE participant_id = :pid"),
+                {"pid": str(customer_id)}
+            )
+            db.execute(
+                text("DELETE FROM public.patient_reports WHERE participant_id = :pid"),
+                {"pid": str(customer_id)}
+            )
+            db.commit()
+        
+        # Step 10: Insert into database using PatientDataInserter
+        inserter = PatientDataInserter()
+        inserter.connect()
+        
+        try:
+            # Insert patient report and get upload_id
+            upload_id = inserter.insert_patient_report(
+                participant_id=str(customer_id),
+                timepoint='Baseline',  # Default timepoint
+                bacteria_df=bacteria_df,
+                lab_name=None,
+                sample_id=None,
+                report_date=None,
+                original_filename=file.filename,
+                extraction_confidence=1.0,
+                extraction_notes=None
+            )
+            
+            # Insert bacteria scores if available
+            if not scoring_results.empty:
+                inserter.insert_bacteria_scores(
+                    upload_id=upload_id,
+                    participant_id=str(customer_id),
+                    bacteria_scores_df=scoring_results
+                )
+            
+            # Insert domain scores if available
+            if not domain_scores_df.empty:
+                # Add required columns for insert_domain_scores
+                domain_scores_df['positive_bacteria'] = domain_scores_df.get('positive_bacteria', 0)
+                domain_scores_df['negative_bacteria'] = domain_scores_df.get('negative_bacteria', 0)
+                domain_scores_df['dominant_bacteria'] = domain_scores_df.get('dominant_bacteria', None)
+                domain_scores_df['dominant_impact'] = domain_scores_df.get('dominant_impact', 0.0)
+                domain_scores_df['avg_confidence'] = domain_scores_df.get('avg_confidence', 1.0)
+                domain_scores_df['total_impact'] = domain_scores_df['domain_score']  # Rename for inserter
+                
+                inserter.insert_domain_scores(
+                    upload_id=upload_id,
+                    participant_id=str(customer_id),
+                    domain_scores_df=domain_scores_df
+                )
+            
+            # Commit all changes
+            inserter.conn.commit()
+            
+        except Exception as e:
+            inserter.conn.rollback()
+            raise Exception(f"Database insertion failed: {str(e)}")
+        
+        finally:
+            inserter.disconnect()
+        
+        # Step 11: Return processing results
+        bacteria_scored = len(scoring_results['bacteria_name'].unique()) if not scoring_results.empty else 0
+        
+        return {
+            "success": True,
+            "customer_id": customer_id,
+            "upload_timestamp": timestamp,
+            "pdf_path": str(pdf_path),
+            "processing_results": {
+                "total_bacteria": len(bacteria_df),
+                "bacteria_scored": bacteria_scored,
+                "domains_analyzed": len(domain_scores_df),
+                "domain_scores": {
+                    row['domain']: {
+                        "score": float(row['domain_score']),
+                        "bacteria_count": int(row['bacteria_count'])
+                    }
+                    for _, row in domain_scores_df.iterrows()
+                } if not domain_scores_df.empty else {}
+            },
+            "message": "Report uploaded and processed successfully"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Clean up uploaded file if processing fails
+        if 'pdf_path' in locals() and Path(pdf_path).exists():
+            Path(pdf_path).unlink()
+        
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error processing report: {str(e)}"
+        )
 
 # -----------------------------------------------------------------------------
 # DASHBOARD DATA (Portal) — uses real data only (no mock)
@@ -657,16 +1094,26 @@ def _species_for_domain(customer_id: int, domain_id: int, db: Session) -> List[D
     for item in r.bacteria_data:
         name = (item or {}).get("bacteria_name","").strip()
         if not name: continue
-        abundance = float((item or {}).get("abundance",0))
+        # Support both "abundance" and "relative_abundance" fields
+        abundance = float((item or {}).get("relative_abundance") or (item or {}).get("abundance") or 0)
         ev = (item or {}).get("evidence_strength","C")
         msp_id = (item or {}).get("msp_id","")  # Add this line
         units = (item or {}).get("units","relative_abundance_fraction")
         matches = by_name.get(name.lower(), [])
         if not any(m.domain == domain_name for m in matches):
             continue
-        pct = convert_abundance_to_percentage(abundance)
+        
+        # Check if abundance is already a percentage (>1) or a fraction (0-1)
+        if abundance > 1.0:
+            # Already a percentage (new upload data)
+            pct = round(abundance, 2)
+        else:
+            # Fractional abundance (old data), convert to percentage
+            pct = convert_abundance_to_percentage(abundance)
+        
         cat = categorize_bacteria_by_name(name)
         status = calculate_bacteria_status(abundance, ev, cat)
+        microbewiki_url = (item or {}).get("microbewiki_url")
         out.append({
             "bacteria_name": name,
             "msp_id": msp_id,  # Add this line
@@ -676,6 +1123,7 @@ def _species_for_domain(customer_id: int, domain_id: int, db: Session) -> List[D
             "units": units,
             "category": cat,
             "status": status,
+            "microbewiki_url": microbewiki_url,
             "description": f"Associated with {domain_name} ({next((m.association_type for m in matches if m.domain == domain_name), 'neutral')})"
         })
     return out
@@ -767,10 +1215,340 @@ def get_recommendations_only(domain_id: int, customer_id: int, db: Session = Dep
         raise HTTPException(status_code=404, detail="No recommendations configured for this domain")
     return {"success": True, "recommendations": [dict(r._mapping) for r in rows]}
 
-@app.get("/api/clinical-trials", tags=["Portal"])
-def clinical_trials_placeholder():
-    # No clinical trials table found in schema dump; expose explicit 501 to avoid mock data
-    raise HTTPException(status_code=501, detail="Clinical trials endpoint not configured with a data source")
+@app.get("/api/clinical-trials", tags=["Clinical Trials"])
+def get_all_trials(limit: int = 50, status: Optional[str] = None, phase: Optional[str] = None):
+    """
+    TYPE 1: Get all microbiome clinical trials for customer display and registration
+    
+    Query Parameters:
+    - limit: Number of trials to return (default: 50)
+    - status: Filter by trial status (RECRUITING, NOT_YET_RECRUITING)
+    - phase: Filter by trial phase (PHASE_1, PHASE_2, PHASE_3, PHASE_4)
+    
+    Returns: All active/recruiting microbiome trials that customer can register for
+    """
+    try:
+        from clinical_trials_service import ClinicalTrialsService
+        
+        service = ClinicalTrialsService()
+        # Fetch comprehensive trials
+        studies = service.fetch_microbiome_trials(max_results=500)
+        
+        # Allowed statuses (only active trials)
+        ALLOWED_STATUSES = ['RECRUITING', 'NOT_YET_RECRUITING']
+        
+        parsed_trials = []
+        for study in studies:
+            trial = service.parse_trial(study)
+            if trial:
+                # Filter by allowed status
+                trial_status = trial.get('status', '').upper()
+                if trial_status in ALLOWED_STATUSES:
+                    parsed_trials.append(trial)
+        
+        # Apply filters
+        filtered_trials = parsed_trials
+        
+        # Filter by status if provided
+        if status and status.upper() in ALLOWED_STATUSES:
+            filtered_trials = [t for t in filtered_trials if t.get('status', '').upper() == status.upper()]
+        
+        # Filter by phase if provided
+        if phase:
+            filtered_trials = [t for t in filtered_trials if t.get('phase', '').upper() == phase.upper()]
+        
+        # Sort by enrollment (most active first)
+        filtered_trials.sort(key=lambda x: x.get('enrollment', 0), reverse=True)
+        
+        return {
+            "success": True,
+            "type": "general_trials",
+            "description": "All microbiome clinical trials available for registration",
+            "filters_applied": {
+                "status": status or "RECRUITING, NOT_YET_RECRUITING",
+                "phase": phase or "all"
+            },
+            "trials": filtered_trials[:limit],
+            "count": len(filtered_trials[:limit]),
+            "total_matched": len(filtered_trials),
+            "total_available": len(parsed_trials),
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching trials: {str(e)}")
+
+
+@app.get("/api/clinical-trials/by-domain/{domain}", tags=["Clinical Trials"])
+def get_trials_by_domain(
+    domain: str, 
+    limit: int = 50, 
+    status: Optional[str] = None, 
+    phase: Optional[str] = None
+):
+    """
+    TYPE 2: Get domain-specific clinical trials for customer display and registration
+    
+    Path Parameters:
+    - domain: Health domain (gut, liver, cardiometabolic, cognitive, kidney)
+    
+    Query Parameters:
+    - limit: Number of trials to return (default: 50)
+    - status: Filter by trial status (RECRUITING, NOT_YET_RECRUITING)
+    - phase: Filter by trial phase (PHASE_1, PHASE_2, PHASE_3, PHASE_4)
+    
+    Returns: Active/recruiting trials specific to the selected health domain
+    Matching is based ONLY on trial titles using predefined synonym lists.
+    """
+    try:
+        from clinical_trials_service import ClinicalTrialsService
+        
+        service = ClinicalTrialsService()
+        all_trials = service.fetch_microbiome_trials(max_results=1000)
+        
+        # Get domain-specific synonyms (WITHOUT universal intervention terms for precise matching)
+        domain_synonyms = _get_all_domain_synonyms(domain, include_interventions=False)
+        
+        # Allowed statuses
+        ALLOWED_STATUSES = ['RECRUITING', 'NOT_YET_RECRUITING']
+        
+        # Filter trials - TITLE ONLY
+        filtered_trials = []
+        for study in all_trials:
+            trial = service.parse_trial(study)
+            if trial:
+                # Check status
+                trial_status = trial.get('status', '').upper()
+                if trial_status not in ALLOWED_STATUSES:
+                    continue
+                
+                # Check domain match by TITLE ONLY using synonyms
+                if _matches_any_synonym(trial.get('title', ''), domain_synonyms):
+                    filtered_trials.append(trial)
+        
+        # Apply additional filters
+        if status and status.upper() in ALLOWED_STATUSES:
+            filtered_trials = [t for t in filtered_trials if t.get('status', '').upper() == status.upper()]
+        
+        if phase:
+            filtered_trials = [t for t in filtered_trials if t.get('phase', '').upper() == phase.upper()]
+        
+        # Sort by enrollment
+        filtered_trials.sort(key=lambda x: x.get('enrollment', 0), reverse=True)
+        
+        return {
+            "success": True,
+            "type": "domain_specific_trials",
+            "description": f"Clinical trials related to {domain.upper()} health (title-based matching)",
+            "domain": domain.lower(),
+            "matching_method": "title_only_with_synonyms",
+            "synonym_count": len(domain_synonyms),
+            "filters_applied": {
+                "status": status or "RECRUITING, NOT_YET_RECRUITING",
+                "phase": phase or "all"
+            },
+            "trials": filtered_trials[:limit],
+            "count": len(filtered_trials[:limit]),
+            "total_matched": len(filtered_trials),
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching trials for domain: {str(e)}")
+
+
+@app.get("/api/clinical-trials/search", tags=["Clinical Trials"])
+def search_trials(
+    q: str, 
+    limit: int = 50, 
+    status: Optional[str] = None, 
+    phase: Optional[str] = None
+):
+    """
+    Search clinical trials by keyword/domain
+    
+    Supports both simple and compound queries:
+    - Simple: "Probiotics" → search synonym-based
+    - Compound: "Gut microbiome AND depression" → match both domain AND condition
+    
+    Query Parameters:
+    - q: Search keyword/phrase or compound query (use AND for multiple domains/conditions)
+    - limit: Number of trials to return (default: 50)
+    - status: Filter by trial status (RECRUITING, NOT_YET_RECRUITING)
+    - phase: Filter by trial phase (PHASE_1, PHASE_2, PHASE_3, PHASE_4)
+    
+    Returns: Matching active/recruiting trials (TITLE-BASED MATCHING ONLY)
+    """
+    try:
+        from clinical_trials_service import ClinicalTrialsService
+        
+        service = ClinicalTrialsService()
+        all_trials = service.fetch_microbiome_trials(max_results=1000)
+        
+        # Allowed statuses
+        ALLOWED_STATUSES = ['RECRUITING', 'NOT_YET_RECRUITING']
+        
+        # Parse compound query (e.g., "Gut microbiome AND depression")
+        query_parts = [part.strip() for part in q.split(" AND ")]
+        all_query_synonyms = []
+        
+        for query_part in query_parts:
+            # Check if it's a domain name
+            if query_part.lower() in CLINICAL_TRIALS_SYNONYMS:
+                synonyms = _get_all_domain_synonyms(query_part.lower())
+            else:
+                # Treat as free-text search - look for synonyms matching this term
+                synonyms = []
+                # Search across all domains for matching synonyms
+                for domain_key, domain_data in CLINICAL_TRIALS_SYNONYMS.items():
+                    for category, terms in domain_data.items():
+                        for term in terms:
+                            if query_part.lower() in term.lower():
+                                synonyms.append(term)
+                
+                # If no synonyms found, use the query term as-is (partial match)
+                if not synonyms:
+                    synonyms = [query_part]
+            
+            all_query_synonyms.extend(synonyms)
+        
+        # Filter by search query and status - TITLE ONLY
+        matched_trials = []
+        for study in all_trials:
+            trial = service.parse_trial(study)
+            if trial:
+                # Check status
+                trial_status = trial.get('status', '').upper()
+                if trial_status not in ALLOWED_STATUSES:
+                    continue
+                
+                # Check search query against TITLE ONLY
+                title = trial.get('title', '').lower()
+                if any(synonym.lower() in title for synonym in all_query_synonyms):
+                    matched_trials.append(trial)
+        
+        # Apply additional filters
+        if status and status.upper() in ALLOWED_STATUSES:
+            matched_trials = [t for t in matched_trials if t.get('status', '').upper() == status.upper()]
+        
+        if phase:
+            matched_trials = [t for t in matched_trials if t.get('phase', '').upper() == phase.upper()]
+        
+        # Sort by enrollment
+        matched_trials.sort(key=lambda x: x.get('enrollment', 0), reverse=True)
+        
+        return {
+            "success": True,
+            "type": "search_results",
+            "description": f"Search results for '{q}' (title-based matching with synonyms)",
+            "search_query": q,
+            "matching_method": "title_only_with_synonyms",
+            "query_parts": query_parts,
+            "synonyms_used": list(set(all_query_synonyms[:20])),  # Show first 20 unique synonyms
+            "filters_applied": {
+                "status": status or "RECRUITING, NOT_YET_RECRUITING",
+                "phase": phase or "all"
+            },
+            "trials": matched_trials[:limit],
+            "count": len(matched_trials[:limit]),
+            "total_matched": len(matched_trials),
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error searching trials: {str(e)}")
+
+
+@app.get("/api/customer/{customer_id}/clinical-trials", tags=["Clinical Trials"])
+def get_customer_relevant_trials(
+    customer_id: int, 
+    limit: int = 50, 
+    status: Optional[str] = None, 
+    phase: Optional[str] = None, 
+    db: Session = Depends(get_db)
+):
+    """
+    Get clinical trials relevant to customer's health domains
+    
+    Path Parameters:
+    - customer_id: Customer ID
+    
+    Query Parameters:
+    - limit: Number of trials to return (default: 50)
+    - status: Filter by trial status (RECRUITING, NOT_YET_RECRUITING)
+    - phase: Filter by trial phase (PHASE_1, PHASE_2, PHASE_3, PHASE_4)
+    
+    Returns: Trials matching customer's health profile
+    Matching is based ONLY on trial titles using domain-specific synonyms
+    """
+    try:
+        from clinical_trials_service import ClinicalTrialsService
+        
+        # Get customer's health domains from dashboard
+        customer_domains = []
+        try:
+            dashboard = get_customer_dashboard_data(customer_id, db)
+            if dashboard and "dashboard_data" in dashboard:
+                domains_dict = dashboard["dashboard_data"]["health_data"]["domains"]
+                customer_domains = [d for d in domains_dict.keys() if d != "overall"]
+        except:
+            # Default fallback
+            customer_domains = ["gut"]
+        
+        # Allowed statuses
+        ALLOWED_STATUSES = ['RECRUITING', 'NOT_YET_RECRUITING']
+        
+        service = ClinicalTrialsService()
+        all_trials = service.fetch_microbiome_trials(max_results=1000)
+        
+        # Collect all synonyms from customer's domains
+        all_domain_synonyms = []
+        for domain in customer_domains:
+            all_domain_synonyms.extend(_get_all_domain_synonyms(domain))
+        
+        # Remove duplicates while preserving order
+        all_domain_synonyms = list(dict.fromkeys(all_domain_synonyms))
+        
+        # Filter trials by customer domains - TITLE ONLY
+        relevant_trials = []
+        for study in all_trials:
+            trial = service.parse_trial(study)
+            if trial:
+                # Check status
+                trial_status = trial.get('status', '').upper()
+                if trial_status not in ALLOWED_STATUSES:
+                    continue
+                
+                # Check domain match by TITLE ONLY using all domain synonyms
+                if _matches_any_synonym(trial.get('title', ''), all_domain_synonyms):
+                    relevant_trials.append(trial)
+        
+        # Apply additional filters
+        if status and status.upper() in ALLOWED_STATUSES:
+            relevant_trials = [t for t in relevant_trials if t.get('status', '').upper() == status.upper()]
+        
+        if phase:
+            relevant_trials = [t for t in relevant_trials if t.get('phase', '').upper() == phase.upper()]
+        
+        # Sort by enrollment
+        relevant_trials.sort(key=lambda x: x.get('enrollment', 0), reverse=True)
+        
+        return {
+            "success": True,
+            "type": "customer_personalized_trials",
+            "description": "Clinical trials personalized to customer's health domains (title-based matching)",
+            "customer_id": customer_id,
+            "customer_domains": customer_domains,
+            "matching_method": "title_only_with_synonyms",
+            "synonym_count": len(all_domain_synonyms),
+            "filters_applied": {
+                "status": status or "RECRUITING, NOT_YET_RECRUITING",
+                "phase": phase or "all"
+            },
+            "trials": relevant_trials[:limit],
+            "count": len(relevant_trials[:limit]),
+            "total_matched": len(relevant_trials),
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching customer trials: {str(e)}")
 
 # -----------------------------------------------------------------------------
 # ----------------------------  DOMAIN API (separate)  ------------------------
@@ -1662,6 +2440,105 @@ def generate_pdf_report(report_request: dict, customer_id: int = None, db: Sessi
                 max_rows=15
             )
             story.append(neutral_table)
+        
+        # Add Recommendations Section
+        story.append(NextPageTemplate('SingleCol'))
+        story.append(PageBreak())
+        
+        # Get recommendations for report
+        try:
+            # Determine which domains to get recommendations for
+            if report_type == "domain" and requested_domains:
+                domains_to_get = requested_domains
+            else:
+                domains_to_get = ["gut", "liver", "heart", "skin", "cognitive", "aging"]
+            
+            # Page title for recommendations
+            story.append(Paragraph(
+                "<b>Personalized Recommendations</b>",
+                ParagraphStyle('PageTitle', fontSize=16, textColor=colors.HexColor('#1A365D'),
+                              spaceAfter=12, fontName='Helvetica-Bold', alignment=1)
+            ))
+            
+            # Get and add recommendations for each domain
+            for domain_name in domains_to_get:
+                try:
+                    result = cached_recommendation_service.get_recommendations(
+                        customer_id=customer_id,
+                        domain_name=domain_name,
+                        db=db,
+                        force_regenerate=False
+                    )
+                    
+                    if result.get("success") and result.get("recommendations"):
+                        rec_data = result["recommendations"]
+                        
+                        # Domain header
+                        story.append(Paragraph(
+                            f"<b>{domain_name.title()} Health Recommendations</b>",
+                            ParagraphStyle('DomainHeader', 
+                                          fontSize=12, 
+                                          textColor=colors.HexColor('#2563EB'),
+                                          spaceAfter=8, 
+                                          fontName='Helvetica-Bold')
+                        ))
+                        
+                        # Dietary Recommendations
+                        if rec_data.get("dietary_recommendations"):
+                            story.append(Paragraph(
+                                "<b>Dietary Recommendations:</b>",
+                                ParagraphStyle('SubHeader', fontSize=10, fontName='Helvetica-Bold', spaceAfter=4)
+                            ))
+                            
+                            for item in rec_data["dietary_recommendations"][:3]:  # Limit to 3 items
+                                story.append(Paragraph(
+                                    f"- <b>{item.get('item', 'N/A')}</b> - {item.get('rationale', 'N/A')}",
+                                    ParagraphStyle('RecommendationItem', fontSize=9, leftIndent=12, spaceAfter=3)
+                                ))
+                        
+                        # Lifestyle Recommendations
+                        if rec_data.get("lifestyle_recommendations"):
+                            story.append(Paragraph(
+                                "<b>Lifestyle Recommendations:</b>",
+                                ParagraphStyle('SubHeader', fontSize=10, fontName='Helvetica-Bold', spaceAfter=4, spaceBefore=6)
+                            ))
+                            
+                            for item in rec_data["lifestyle_recommendations"][:2]:  # Limit to 2 items
+                                story.append(Paragraph(
+                                    f"- <b>{item.get('activity', 'N/A')}</b> - {item.get('rationale', 'N/A')}",
+                                    ParagraphStyle('RecommendationItem', fontSize=9, leftIndent=12, spaceAfter=3)
+                                ))
+                        
+                        # Summary
+                        if rec_data.get("summary"):
+                            story.append(Paragraph(
+                                f"<b>Key Takeaway:</b> <i>{rec_data['summary']}</i>",
+                                ParagraphStyle('Summary', fontSize=9, textColor=colors.HexColor('#4B5563'), 
+                                             spaceBefore=6, spaceAfter=12)
+                            ))
+                        
+                        story.append(Spacer(1, 8))
+                        
+                except Exception as e:
+                    print(f"Error getting recommendations for {domain_name}: {e}")
+                    continue
+            
+            # Add disclaimer
+            story.append(Spacer(1, 20))
+            story.append(Paragraph(
+                "<b>Disclaimer:</b> These recommendations are for informational purposes only. "
+                "Please consult with your healthcare provider before making significant changes to your diet or lifestyle.",
+                ParagraphStyle('Disclaimer', fontSize=8, textColor=colors.HexColor('#6B7280'), 
+                              alignment=0)
+            ))
+            
+        except Exception as e:
+            print(f"Error adding recommendations section: {e}")
+            # Add a simple message if recommendations fail
+            story.append(Paragraph(
+                "Recommendations are currently unavailable. Please try again later.",
+                styles['Normal']
+            ))
         
         # Build PDF
         doc.build(story)

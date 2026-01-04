@@ -132,18 +132,26 @@ export function AppProvider({ children }) {
     console.log('🔍 Resolving customer ID from URL...');
     
     try {
+      let customerId = null;
+      
+      // Check query parameter first: ?customer=264
       const urlParams = new URLSearchParams(window.location.search);
-      const customerIdFromURL = urlParams.get('customer');
+      const customerIdFromQuery = urlParams.get('customer');
       
-      let customerId;
-      
-      if (customerIdFromURL) {
-        customerId = parseInt(customerIdFromURL);
-        console.log(`📝 Customer ID from URL: ${customerId}`);
+      if (customerIdFromQuery) {
+        customerId = parseInt(customerIdFromQuery);
+        console.log(`📝 Customer ID from query parameter: ${customerId}`);
       } else {
-        // Default to John Doe for testing
-        customerId = 3091;
-        console.log(`📝 Using default customer ID: ${customerId}`);
+        // Check path-based URL: /customer/264
+        const pathMatch = window.location.pathname.match(/\/customer\/(\d+)/);
+        if (pathMatch && pathMatch[1]) {
+          customerId = parseInt(pathMatch[1]);
+          console.log(`📝 Customer ID from URL path: ${customerId}`);
+        } else {
+          // Default to John Doe for testing
+          customerId = 3091;
+          console.log(`📝 Using default customer ID: ${customerId}`);
+        }
       }
       
       // Set customer ID in both services

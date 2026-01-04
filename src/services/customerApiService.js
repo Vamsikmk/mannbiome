@@ -245,6 +245,7 @@ class CustomerApiService {
         const healthData = {
           diversityScore: dashboardData.health_data.diversity_score,
           overallScore: dashboardData.health_data.overall_score,
+          last_updated: dashboardData.health_data.last_updated, // Add this line
           domains: {
             // Add overall domain if not present
             overall: {

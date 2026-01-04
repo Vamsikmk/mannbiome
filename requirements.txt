@@ -25,5 +25,10 @@ anthropic==0.40.0
 # PDF generation
 reportlab==4.0.4
 
+# PDF parsing for patient reports
+pdfplumber>=0.10.0
+pandas>=2.0.0
+numpy>=1.24.0
+
 # For AWS Lambda deployment (optional, we'll add this later)
 # mangum==0.17.0

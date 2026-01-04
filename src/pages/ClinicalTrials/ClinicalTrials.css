@@ -47,6 +47,38 @@
     max-width: 80%;
 }
 
+/* View Type Selector */
+.view-type-selector {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+}
+
+.view-btn {
+    padding: 10px 20px;
+    border: 2px solid #ddd;
+    background: white;
+    color: #333;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    transition: all 0.3s ease;
+}
+
+.view-btn:hover {
+    border-color: #00bfa5;
+    color: #00bfa5;
+}
+
+.view-btn.active {
+    background: #00bfa5;
+    color: white;
+    border-color: #00bfa5;
+    box-shadow: 0 2px 8px rgba(0, 191, 165, 0.3);
+}
+
 /* Loading State */
 .loading-state {
     display: flex;
@@ -115,22 +147,62 @@
 
 .filter-controls {
     display: flex;
-    gap: 15px;
+    gap: 12px;
     flex-wrap: wrap;
+    align-items: center;
 }
 
-.filter-controls select {
+.filter-controls select,
+.filter-controls input[type="date"],
+.filter-controls input[type="text"],
+.filter-controls input[type="number"] {
     padding: 8px 12px;
     border: 1px solid #ddd;
     border-radius: 4px;
     background: white;
     font-size: 14px;
     cursor: pointer;
+    min-width: 120px;
+    transition: all 0.2s ease;
 }
 
-.filter-controls select:focus {
+.filter-controls input[type="text"],
+.filter-controls input[type="number"] {
+    cursor: text;
+}
+
+.filter-controls select:hover,
+.filter-controls input[type="date"]:hover,
+.filter-controls input[type="text"]:hover,
+.filter-controls input[type="number"]:hover {
+    border-color: #00bfa5;
+}
+
+.filter-controls select:focus,
+.filter-controls input[type="date"]:focus,
+.filter-controls input[type="text"]:focus,
+.filter-controls input[type="number"]:focus {
     outline: none;
     border-color: #00BFA5;
+    box-shadow: 0 0 0 3px rgba(0, 191, 165, 0.1);
+}
+
+.reset-filters-btn {
+    padding: 8px 16px;
+    background: #f44336;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    transition: all 0.3s ease;
+    white-space: nowrap;
+}
+
+.reset-filters-btn:hover {
+    background: #e53935;
+    box-shadow: 0 2px 8px rgba(244, 67, 54, 0.3);
 }
 
 /* Results Summary */
@@ -138,6 +210,31 @@
     margin-bottom: 20px;
     color: #666;
     font-size: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.results-summary p {
+    margin: 0;
+}
+
+.results-summary strong {
+    color: #00bfa5;
+    font-weight: 600;
+}
+
+.personalization-note {
+    color: #00bfa5;
+    font-style: italic;
+    font-size: 13px;
+}
+
+.filters-applied-note {
+    color: #ff9800;
+    font-style: italic;
+    font-size: 13px;
+    font-weight: 500;
 }
 
 /* Trial Cards - Updated for collapsible design */
@@ -196,19 +293,22 @@
 
 .trial-meta {
     display: flex;
-    gap: 10px;
+    gap: 8px;
     align-items: center;
     flex-wrap: wrap;
+    margin-top: 8px;
 }
 
 .trial-phase,
 .trial-status,
-.trial-duration {
-    padding: 4px 8px;
+.trial-duration,
+.trial-nct {
+    padding: 4px 10px;
     border-radius: 4px;
     font-size: 12px;
     font-weight: 500;
     white-space: nowrap;
+    display: inline-block;
 }
 
 .trial-phase {
@@ -223,6 +323,13 @@
 .trial-duration {
     background: #e9ecef;
     color: #495057;
+}
+
+.trial-nct {
+    background: #f0f0f0;
+    color: #666;
+    font-family: monospace;
+    font-size: 11px;
 }
 
 /* Trial Participation Info */
@@ -311,6 +418,34 @@
     line-height: 1.6;
     margin: 0 0 15px 0;
     font-size: 15px;
+}
+
+.trial-details {
+    background: #f8f9fa;
+    padding: 15px;
+    border-radius: 6px;
+    margin: 15px 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 15px;
+}
+
+.detail-group {
+    display: flex;
+    flex-direction: column;
+}
+
+.detail-group strong {
+    color: #333;
+    font-size: 14px;
+    margin-bottom: 5px;
+}
+
+.detail-group p {
+    color: #666;
+    font-size: 14px;
+    margin: 0;
+    line-height: 1.4;
 }
 
 .trial-findings {
@@ -511,5 +646,101 @@
     .learn-more-btn,
     .contact-btn {
         width: 100%;
+    }
+}
+
+/* Pagination Styles */
+.pagination-container {
+    margin-top: 30px;
+    padding: 20px;
+    border-top: 1px solid #e0e0e0;
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.pagination-info {
+    text-align: center;
+    color: #666;
+    font-size: 14px;
+}
+
+.pagination-controls {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.pagination-btn {
+    padding: 8px 16px;
+    background-color: #f5f5f5;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    transition: all 0.2s ease;
+}
+
+.pagination-btn:hover:not(:disabled) {
+    background-color: #007bff;
+    color: white;
+    border-color: #007bff;
+}
+
+.pagination-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.pagination-numbers {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+}
+
+.page-number {
+    padding: 6px 10px;
+    background-color: #f5f5f5;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    transition: all 0.2s ease;
+}
+
+.page-number:hover {
+    background-color: #e8e8e8;
+    border-color: #999;
+}
+
+.page-number.active {
+    background-color: #007bff;
+    color: white;
+    border-color: #007bff;
+}
+
+.pagination-ellipsis {
+    padding: 6px 4px;
+    color: #666;
+    font-weight: 500;
+}
+
+@media (max-width: 768px) {
+    .pagination-controls {
+        gap: 6px;
+    }
+
+    .pagination-btn {
+        padding: 6px 12px;
+        font-size: 12px;
+    }
+
+    .page-number {
+        padding: 5px 8px;
+        font-size: 12px;
     }
 }
