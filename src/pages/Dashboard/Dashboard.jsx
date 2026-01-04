@@ -18,6 +18,27 @@ const Dashboard = () => {
     return Number(Number(score).toFixed(1)); // Ensure it's a number for the Gauge
   };
 
+  // Format date as "Dec 26, 2025 12:30 PM"
+  const formatLastUpdated = (dateString) => {
+    if (!dateString) return 'N/A';
+    
+    try {
+      const date = new Date(dateString);
+      const options = { 
+        year: 'numeric', 
+        month: 'short', 
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+      };
+      return date.toLocaleString('en-US', options);
+    } catch (error) {
+      console.error('Error formatting date:', error);
+      return dateString;
+    }
+  };
+
   // Get diversity score - check both overall domain and top-level
   const getDiversityScore = () => {
     // First try to get from overall domain (new structure)
@@ -133,7 +154,7 @@ const Dashboard = () => {
             <circle cx="12" cy="12" r="10"></circle>
             <polyline points="12 6 12 12 16 14"></polyline>
           </svg>
-          Last updated: {user.lastUpdated}
+          Last updated: {formatLastUpdated(healthData.last_updated)}
         </div>
       </div>
 

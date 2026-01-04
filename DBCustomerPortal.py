@@ -35,11 +35,148 @@ import traceback
 # Import the cached recommendation service
 from llm_recommendations_cached import CachedRecommendationService
 
+# ============================================================================
+# CLINICAL TRIALS SYNONYM DICTIONARY - Domain-Specific Matching
+# ============================================================================
+CLINICAL_TRIALS_SYNONYMS = {
+    "gut": {
+        "core_terms": [
+            "gut health", "gastrointestinal health", "digestive health", "intestinal health"
+        ],
+        "microbiome_focused": [
+            "gut microbiome", "gut dysbiosis", "microbiota modulation", 
+            "fecal microbiota transplantation", "fmt", "probiotics", "prebiotics", 
+            "synbiotics", "postbiotics"
+        ],
+        "disease_specific": [
+            "irritable bowel syndrome", "ibs", "inflammatory bowel disease", "ibm",
+            "crohn's disease", "ulcerative colitis", "functional gastrointestinal disorders",
+            "small intestinal bacterial overgrowth", "sibo"
+        ]
+    },
+    "liver": {
+        "core_terms": [
+            "liver", "liver health", "hepatic health", "liver function", "hepatic function"
+        ],
+        "metabolic_inflammatory": [
+            "non-alcoholic fatty liver disease", "nafld", "metabolic dysfunction-associated fatty liver disease",
+            "mafld", "non-alcoholic steatohepatitis", "nash", "hepatic steatosis", 
+            "liver fibrosis", "hepatic inflammation"
+        ],
+        "cancer_severe": [
+            "hepatocellular carcinoma", "hcc", "liver cirrhosis", "chronic liver disease"
+        ]
+    },
+    "cognitive": {
+        "core_terms": [
+            "brain health", "cognitive health", "neurocognitive function"
+        ],
+        "neurodegeneration": [
+            "alzheimer's disease", "mild cognitive impairment", "mci", "dementia", 
+            "parkinson's disease"
+        ],
+        "mental_health": [
+            "depression", "anxiety disorders", "major depressive disorder", "mood disorders"
+        ],
+        "cognitive_outcomes": [
+            "memory function", "executive function", "attention", "learning"
+        ]
+    },
+    "kidney": {
+        "core_terms": [
+            "kidney health", "renal health", "renal function"
+        ],
+        "disease_specific": [
+            "chronic kidney disease", "ckd", "acute kidney injury", "aki", 
+            "diabetic nephropathy", "hypertensive nephropathy"
+        ],
+        "gut_kidney_axis": [
+            "gut-kidney axis", "microbiome-derived uremic toxins"
+        ]
+    },
+    "cardiometabolic": {
+        "core_terms": [
+            "cardiovascular health", "cardiometabolic health", "metabolic health"
+        ],
+        "disease_specific": [
+            "type 2 diabetes", "type 2 diabetes mellitus", "insulin resistance", 
+            "metabolic syndrome", "obesity", "dyslipidemia", "hypertension"
+        ],
+        "microbiome_links": [
+            "microbiome and metabolism", "scfa metabolism", "tmao"
+        ]
+    },
+    "intervention": {
+        "all_domains": [
+            "probiotic supplementation", "probiotics", "prebiotics", "synbiotics", "nutraceutical",
+            "synbiotic therapy", "microbiome-targeted therapy", "microbiome modulation",
+            "precision nutrition", "fecal microbiota transplantation", "fmt"
+        ]
+    }
+}
 
+# Flatten all synonyms for quick access
+def _get_all_domain_synonyms(domain: str, include_interventions: bool = False) -> List[str]:
+    """
+    Get all synonyms for a specific domain (case-insensitive)
+    
+    Args:
+        domain: Health domain name
+        include_interventions: If True, include universal intervention terms.
+                              For domain-specific endpoints, should be False.
+                              For cross-domain searches, should be True.
+    """
+    domain_lower = domain.lower()
+    
+    # Map aliases
+    domain_map = {
+        "gut": "gut",
+        "heart": "cardiometabolic",
+        "cardiovascular": "cardiometabolic",
+        "brain": "cognitive",
+        "neuro": "cognitive",
+        "kidney": "kidney",
+        "renal": "kidney",
+        "liver": "liver",
+        "hepatic": "liver"
+    }
+    
+    domain_key = domain_map.get(domain_lower, domain_lower)
+    synonyms = []
+    
+    if domain_key in CLINICAL_TRIALS_SYNONYMS:
+        for category, terms in CLINICAL_TRIALS_SYNONYMS[domain_key].items():
+            synonyms.extend(terms)
+    
+    # Only add intervention terms if explicitly requested
+    if include_interventions and domain_key != "intervention":
+        synonyms.extend(CLINICAL_TRIALS_SYNONYMS["intervention"]["all_domains"])
+    
+    return [s.lower() for s in synonyms]
 
-# -----------------------------------------------------------------------------
+def _matches_any_synonym(title: str, synonyms: List[str]) -> bool:
+    """Check if trial title matches any synonym (case-insensitive, partial match)"""
+    title_lower = title.lower()
+    for synonym in synonyms:
+        if synonym in title_lower:
+            return True
+    return False
+
+def _filter_trials_by_title_only(trials: List[Dict], query_terms: List[str]) -> List[Dict]:
+    """
+    Filter trials by title only, using OR logic across all query terms
+    Returns only trials where ANY query term matches in the TITLE field
+    """
+    filtered = []
+    for trial in trials:
+        title = trial.get('title', '').lower()
+        if any(term.lower() in title for term in query_terms):
+            filtered.append(trial)
+    return filtered
+
+# ============================================================================
 # App
-# -----------------------------------------------------------------------------
+# ============================================================================
 app = FastAPI(title="MannBiome API (Portal + Domain)", version="1.0.0")
 
 
@@ -156,24 +293,99 @@ def _format_date(d: Optional[date]) -> Optional[str]:
 def _fetch_domain_scores_for_customer(customer_id: int, db: Session):
     """
     Returns a dict keyed by domain_id (int) with fields: score, diversity, status.
-    Pulls the latest report per domain for this customer from domain_reports.
+    Pulls the latest domain scores for this customer from patient_domain_scores.
+    
+    Score Calculation:
+    - Converts total_impact (can be negative) to a normalized 1-5 scale
+    - Based on ratio of positive vs negative bacteria
+    - Higher positive bacteria = higher score
+    
+    Diversity Calculation:
+    - Uses bacteria_count but normalized to 1-5 scale
+    - Represents actual bacterial diversity in the domain
     """
+    # Mapping from string domain names (in database) to integer domain IDs (expected by frontend)
+    DOMAIN_NAME_TO_ID = {
+        'gut': 1,
+        'gut_health': 1,
+        'liver': 2,
+        'liver_health': 2,
+        'heart': 3,
+        'heart_health': 3,
+        'cardiovascular': 3,
+        'skin': 4,
+        'skin_health': 4,
+        'cognitive': 5,
+        'cognitive_health': 5,
+        'brain': 5,
+        'aging': 6,
+        'anti_aging': 6,
+        'longevity': 6
+    }
+    
     rows = db.execute(text("""
-        SELECT DISTINCT ON (dr.domain_id)
-               dr.domain_id, dr.score, dr.diversity, dr.status, hr.created_at
-        FROM microbiome.domain_reports dr
-        JOIN microbiome.health_reports hr ON dr.report_id = hr.report_id
-        WHERE hr.customer_id = :cid
-        ORDER BY dr.domain_id, hr.created_at DESC
-    """), {"cid": customer_id}).fetchall()
+        SELECT DISTINCT ON (pds.domain)
+               pds.domain as domain_name,
+               pds.total_impact as raw_impact,
+               pds.bacteria_count as total_associations,
+               pds.positive_bacteria as positive_count,
+               pds.negative_bacteria as negative_count,
+               pds.health_status as status,
+               pr.created_at
+        FROM public.patient_domain_scores pds
+        JOIN public.patient_reports pr ON pds.upload_id = pr.upload_id
+        WHERE pr.participant_id = :cid
+        ORDER BY pds.domain, pr.created_at DESC
+    """), {"cid": str(customer_id)}).fetchall()
 
+    print(f"🔍 DEBUG: Fetched {len(rows)} domain score rows for customer {customer_id}")
+    
     by_domain = {}
     for r in rows:
-        by_domain[int(r.domain_id)] = {
-            "score": float(r.score),
-            "diversity": float(r.diversity),
-            "status": str(r.status)
-        }
+        domain_name = str(r.domain_name).lower().strip()
+        domain_id = DOMAIN_NAME_TO_ID.get(domain_name)
+        
+        print(f"   Domain: {domain_name} -> ID: {domain_id} | +ve: {r.positive_count} | -ve: {r.negative_count} | assoc: {r.total_associations}")
+        
+        if domain_id:
+            # Get raw values
+            positive = float(r.positive_count) if r.positive_count is not None else 0
+            negative = float(r.negative_count) if r.negative_count is not None else 0
+            bacteria_count = float(r.total_associations) if r.total_associations is not None else 0
+            
+            # Calculate score based on positive/negative ratio
+            # If both are 0, we don't have this data, so use a heuristic
+            total_bacteria = positive + negative
+            if total_bacteria > 0:
+                # We have positive/negative data
+                positive_ratio = positive / total_bacteria
+                # Normalize to 1-5 scale
+                normalized_score = 1.0 + (positive_ratio * 4.0)
+            else:
+                # No positive/negative data - use bacteria_count as proxy
+                # Assume more bacteria = healthier (up to a point)
+                # Score formula: normalized to 1-5 scale
+                if bacteria_count > 0:
+                    # More bacteria = better, but with diminishing returns
+                    import math
+                    log_factor = math.log10(bacteria_count + 1) / 2.0  # log scale
+                    # Scale: 2.5 baseline + log bonus, capped at 4.0
+                    normalized_score = min(4.0, 2.5 + log_factor)
+                else:
+                    normalized_score = 2.5
+            
+            # Calculate diversity score using bacteria_count
+            # This represents the number of unique bacteria-domain associations
+            # Normalized to 1-5 scale
+            diversity_score = min(5.0, 1.0 + (bacteria_count / 20.0))
+            
+            print(f"      -> Score: {normalized_score:.1f}, Diversity: {diversity_score:.1f}, Bacteria: {bacteria_count}")
+            
+            by_domain[domain_id] = {
+                "score": round(normalized_score, 1),
+                "diversity": round(diversity_score, 1),
+                "status": str(r.status) if r.status else "unknown"
+            }
     return by_domain
 
 
@@ -242,26 +454,48 @@ def calculate_bacteria_status(abundance: float, evidence_strength: str, category
     return "normal"
 
 def calculate_overall_health_score(bact: List[Dict]) -> Dict[str, float]:
+    """
+    Calculate overall health scores on a 1-5 scale.
+    
+    Score calculation:
+    - Based on ratio of beneficial bacteria in good status
+    - Penalized by pathogenic bacteria in high concern status
+    - Range: 1-5 (higher is better)
+    
+    Diversity calculation:
+    - Based on total number of detected bacteria
+    - Normalized to 1-5 scale
+    """
     try:
         if not bact:
-            return {"overall_score": 3.0, "diversity_score": 2.5}
+            return {"overall_score": 2.5, "diversity_score": 2.5}
+        
+        # Count bacteria categories
         bg = len([b for b in bact if b["category"]=="beneficial" and b["status"]=="good"])
         bt = len([b for b in bact if b["category"]=="beneficial"])
         ph = len([b for b in bact if b["category"]=="pathogenic" and b["status"]=="high"])
         pt = len([b for b in bact if b["category"]=="pathogenic"])
         total = len(bact)
-        beneficial_ratio = (bg / bt) if bt else 0.0
+        
+        # Calculate ratios
+        beneficial_ratio = (bg / bt) if bt else 0.5  # Default to neutral if no beneficial
         pathogenic_concern = (ph / pt) if pt else 0.0
-        diversity = min(5.0, 2.0 + (total / 10.0))
-        if(diversity==5):
-            diversity=3.3
-        base = 3.0 + (beneficial_ratio * 1.5) - (pathogenic_concern * 1.5)
+        
+        # Calculate overall score (1-5 scale)
+        # Start at 2.5 (neutral), add for beneficial, subtract for pathogenic
+        base_score = 2.5 + (beneficial_ratio * 2.0) - (pathogenic_concern * 2.0)
+        overall_score = max(1.0, min(5.0, base_score))
+        
+        # Calculate diversity score (1-5 scale)
+        # More bacteria = higher diversity (cap at 5)
+        diversity_score = min(5.0, 1.0 + (total / 20.0))
+        
         return {
-            "overall_score": round(max(1.0, min(5.0, base)), 1),
-            "diversity_score": round(max(1.0, min(5.0, diversity)), 1),
+            "overall_score": round(overall_score, 1),
+            "diversity_score": round(diversity_score, 1),
         }
     except Exception:
-        return {"overall_score": 3.0, "diversity_score": 2.5}
+        return {"overall_score": 2.5, "diversity_score": 2.5}
 
 def group_bacteria_for_carousel(bacteria_analysis: List[Dict]) -> Dict:
     print(f"🔍 group_bacteria_for_carousel received {len(bacteria_analysis)} bacteria")
@@ -1055,7 +1289,7 @@ def get_trials_by_domain(
     TYPE 2: Get domain-specific clinical trials for customer display and registration
     
     Path Parameters:
-    - domain: Health domain (gut, liver, heart, cognitive, skin, aging)
+    - domain: Health domain (gut, liver, cardiometabolic, cognitive, kidney)
     
     Query Parameters:
     - limit: Number of trials to return (default: 50)
@@ -1063,6 +1297,7 @@ def get_trials_by_domain(
     - phase: Filter by trial phase (PHASE_1, PHASE_2, PHASE_3, PHASE_4)
     
     Returns: Active/recruiting trials specific to the selected health domain
+    Matching is based ONLY on trial titles using predefined synonym lists.
     """
     try:
         from clinical_trials_service import ClinicalTrialsService
@@ -1070,22 +1305,13 @@ def get_trials_by_domain(
         service = ClinicalTrialsService()
         all_trials = service.fetch_microbiome_trials(max_results=1000)
         
-        # Domain keywords mapping
-        domain_keywords = {
-            'gut': ['microbiome', 'dysbiosis', 'probiotics', 'prebiotic', 'gastrointestinal', 'intestinal', 'ibs', 'colitis'],
-            'liver': ['liver', 'hepatic', 'cirrhosis', 'microbiota', 'fibrosis'],
-            'heart': ['cardiovascular', 'microbiota', 'heart health', 'hypertension', 'ldl'],
-            'cognitive': ['brain', 'gut-brain', 'neurotransmitter', 'neuroinflammation', 'neurodegeneration', 'alzheimer', 'dementia'],
-            'skin': ['dermatology', 'skin microbiome', 'dermatitis', 'eczema', 'psoriasis', 'acne'],
-            'aging': ['aging', 'longevity', 'senescence', 'age-related', 'inflammation', 'healthy aging']
-        }
-        
-        keywords = domain_keywords.get(domain.lower(), [domain])
+        # Get domain-specific synonyms (WITHOUT universal intervention terms for precise matching)
+        domain_synonyms = _get_all_domain_synonyms(domain, include_interventions=False)
         
         # Allowed statuses
         ALLOWED_STATUSES = ['RECRUITING', 'NOT_YET_RECRUITING']
         
-        # Filter trials
+        # Filter trials - TITLE ONLY
         filtered_trials = []
         for study in all_trials:
             trial = service.parse_trial(study)
@@ -1095,9 +1321,8 @@ def get_trials_by_domain(
                 if trial_status not in ALLOWED_STATUSES:
                     continue
                 
-                # Check domain keywords match
-                text_to_search = (trial['title'] + ' ' + trial['description']).lower()
-                if any(kw.lower() in text_to_search for kw in keywords):
+                # Check domain match by TITLE ONLY using synonyms
+                if _matches_any_synonym(trial.get('title', ''), domain_synonyms):
                     filtered_trials.append(trial)
         
         # Apply additional filters
@@ -1113,9 +1338,10 @@ def get_trials_by_domain(
         return {
             "success": True,
             "type": "domain_specific_trials",
-            "description": f"Clinical trials related to {domain.upper()} health",
+            "description": f"Clinical trials related to {domain.upper()} health (title-based matching)",
             "domain": domain.lower(),
-            "domain_keywords": keywords,
+            "matching_method": "title_only_with_synonyms",
+            "synonym_count": len(domain_synonyms),
             "filters_applied": {
                 "status": status or "RECRUITING, NOT_YET_RECRUITING",
                 "phase": phase or "all"
@@ -1137,15 +1363,19 @@ def search_trials(
     phase: Optional[str] = None
 ):
     """
-    Search clinical trials by keyword
+    Search clinical trials by keyword/domain
+    
+    Supports both simple and compound queries:
+    - Simple: "Probiotics" → search synonym-based
+    - Compound: "Gut microbiome AND depression" → match both domain AND condition
     
     Query Parameters:
-    - q: Search keyword/phrase
+    - q: Search keyword/phrase or compound query (use AND for multiple domains/conditions)
     - limit: Number of trials to return (default: 50)
     - status: Filter by trial status (RECRUITING, NOT_YET_RECRUITING)
     - phase: Filter by trial phase (PHASE_1, PHASE_2, PHASE_3, PHASE_4)
     
-    Returns: Matching active/recruiting trials
+    Returns: Matching active/recruiting trials (TITLE-BASED MATCHING ONLY)
     """
     try:
         from clinical_trials_service import ClinicalTrialsService
@@ -1156,7 +1386,31 @@ def search_trials(
         # Allowed statuses
         ALLOWED_STATUSES = ['RECRUITING', 'NOT_YET_RECRUITING']
         
-        # Filter by search query and status
+        # Parse compound query (e.g., "Gut microbiome AND depression")
+        query_parts = [part.strip() for part in q.split(" AND ")]
+        all_query_synonyms = []
+        
+        for query_part in query_parts:
+            # Check if it's a domain name
+            if query_part.lower() in CLINICAL_TRIALS_SYNONYMS:
+                synonyms = _get_all_domain_synonyms(query_part.lower())
+            else:
+                # Treat as free-text search - look for synonyms matching this term
+                synonyms = []
+                # Search across all domains for matching synonyms
+                for domain_key, domain_data in CLINICAL_TRIALS_SYNONYMS.items():
+                    for category, terms in domain_data.items():
+                        for term in terms:
+                            if query_part.lower() in term.lower():
+                                synonyms.append(term)
+                
+                # If no synonyms found, use the query term as-is (partial match)
+                if not synonyms:
+                    synonyms = [query_part]
+            
+            all_query_synonyms.extend(synonyms)
+        
+        # Filter by search query and status - TITLE ONLY
         matched_trials = []
         for study in all_trials:
             trial = service.parse_trial(study)
@@ -1166,9 +1420,9 @@ def search_trials(
                 if trial_status not in ALLOWED_STATUSES:
                     continue
                 
-                # Check search query
-                text_to_search = (trial['title'] + ' ' + trial['description']).lower()
-                if q.lower() in text_to_search:
+                # Check search query against TITLE ONLY
+                title = trial.get('title', '').lower()
+                if any(synonym.lower() in title for synonym in all_query_synonyms):
                     matched_trials.append(trial)
         
         # Apply additional filters
@@ -1184,8 +1438,11 @@ def search_trials(
         return {
             "success": True,
             "type": "search_results",
-            "description": f"Search results for '{q}'",
+            "description": f"Search results for '{q}' (title-based matching with synonyms)",
             "search_query": q,
+            "matching_method": "title_only_with_synonyms",
+            "query_parts": query_parts,
+            "synonyms_used": list(set(all_query_synonyms[:20])),  # Show first 20 unique synonyms
             "filters_applied": {
                 "status": status or "RECRUITING, NOT_YET_RECRUITING",
                 "phase": phase or "all"
@@ -1219,18 +1476,21 @@ def get_customer_relevant_trials(
     - phase: Filter by trial phase (PHASE_1, PHASE_2, PHASE_3, PHASE_4)
     
     Returns: Trials matching customer's health profile
+    Matching is based ONLY on trial titles using domain-specific synonyms
     """
     try:
         from clinical_trials_service import ClinicalTrialsService
         
-        # Get customer's health domains
-        domains = []
+        # Get customer's health domains from dashboard
+        customer_domains = []
         try:
             dashboard = get_customer_dashboard_data(customer_id, db)
             if dashboard and "dashboard_data" in dashboard:
-                domains = list(dashboard["dashboard_data"]["health_data"]["domains"].keys())
+                domains_dict = dashboard["dashboard_data"]["health_data"]["domains"]
+                customer_domains = [d for d in domains_dict.keys() if d != "overall"]
         except:
-            domains = ["microbiome", "gut", "probiotics"]
+            # Default fallback
+            customer_domains = ["gut"]
         
         # Allowed statuses
         ALLOWED_STATUSES = ['RECRUITING', 'NOT_YET_RECRUITING']
@@ -1238,6 +1498,15 @@ def get_customer_relevant_trials(
         service = ClinicalTrialsService()
         all_trials = service.fetch_microbiome_trials(max_results=1000)
         
+        # Collect all synonyms from customer's domains
+        all_domain_synonyms = []
+        for domain in customer_domains:
+            all_domain_synonyms.extend(_get_all_domain_synonyms(domain))
+        
+        # Remove duplicates while preserving order
+        all_domain_synonyms = list(dict.fromkeys(all_domain_synonyms))
+        
+        # Filter trials by customer domains - TITLE ONLY
         relevant_trials = []
         for study in all_trials:
             trial = service.parse_trial(study)
@@ -1247,9 +1516,8 @@ def get_customer_relevant_trials(
                 if trial_status not in ALLOWED_STATUSES:
                     continue
                 
-                # Check domain match
-                text_to_search = (trial['title'] + ' ' + trial['description']).lower()
-                if any(domain.lower() in text_to_search for domain in domains if domain != "overall"):
+                # Check domain match by TITLE ONLY using all domain synonyms
+                if _matches_any_synonym(trial.get('title', ''), all_domain_synonyms):
                     relevant_trials.append(trial)
         
         # Apply additional filters
@@ -1265,9 +1533,11 @@ def get_customer_relevant_trials(
         return {
             "success": True,
             "type": "customer_personalized_trials",
-            "description": "Clinical trials personalized to customer's health domains",
+            "description": "Clinical trials personalized to customer's health domains (title-based matching)",
             "customer_id": customer_id,
-            "customer_domains": [d for d in domains if d != "overall"],
+            "customer_domains": customer_domains,
+            "matching_method": "title_only_with_synonyms",
+            "synonym_count": len(all_domain_synonyms),
             "filters_applied": {
                 "status": status or "RECRUITING, NOT_YET_RECRUITING",
                 "phase": phase or "all"

@@ -29,65 +29,77 @@ class ClinicalTrialsService:
     
     def __init__(self):
         self.api_url = "https://clinicaltrials.gov/api/v2/studies"
-        self.microbiome_keywords = [
-            'microbiome',
-            'microbiota',
-            'gut health',
-            'dysbiosis',
-            'probiotics',
-            'prebiotic',
-            'bacteria',
-            'oral microbiome',
-            'skin microbiome',
-            'liver microbiome',
-            'cognitive microbiome'
+        # Default query set; keep focused on microbiome only
+        self.base_queries = [
+            "microbiome",
         ]
+
+    def _fetch_query(self, query: str, max_results: int = 1000):
+        """Fetch studies for a single query string with pagination."""
+        page_size = 100
+        collected = []
+
+        # First request to learn total count
+        params = {
+            'pageSize': 1,
+            'countTotal': 'true',
+            'query.cond': query
+        }
+
+        response = requests.get(self.api_url, params=params, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        total_count = data.get('totalCount', 0)
+        logger.info(f"📊 Query '{query}' total found: {total_count}")
+
+        num_pages = min((total_count + page_size - 1) // page_size, max_results // page_size)
+        next_token = data.get('nextPageToken') or data.get('pageToken')
+
+        for page in range(num_pages):
+            page_params = {
+                'pageSize': page_size,
+                'countTotal': 'false',
+                'query.cond': query
+            }
+            if next_token:
+                page_params['pageToken'] = next_token
+
+            resp = requests.get(self.api_url, params=page_params, timeout=10)
+            resp.raise_for_status()
+            page_data = resp.json()
+            studies = page_data.get('studies', [])
+            collected.extend(studies)
+            logger.info(f"✅ Query '{query}' page {page + 1}/{num_pages} - Fetched {len(studies)} trials")
+
+            next_token = page_data.get('nextPageToken') or page_data.get('pageToken')
+            if not next_token or len(collected) >= max_results:
+                break
+
+        return collected[:max_results]
     
     def fetch_microbiome_trials(self, max_results=1000):
-        """Fetch all microbiome-related clinical trials"""
-        
-        logger.info("🔍 Fetching microbiome clinical trials...")
-        all_trials = []
-        
+        """Fetch microbiome-related clinical trials (deduped by NCT ID)."""
+
+        logger.info("🔍 Fetching clinical trials for queries: %s", self.base_queries)
         try:
-            # First request to get total count
-            params = {
-                'pageSize': 1,
-                'countTotal': 'true',
-                'query.cond': 'microbiome'
-            }
-            
-            response = requests.get(self.api_url, params=params, timeout=10)
-            response.raise_for_status()
-            
-            total_count = response.json().get('totalCount', 0)
-            logger.info(f"📊 Total microbiome trials found: {total_count}")
-            
-            # Fetch data page by page
-            page_size = 100
-            num_pages = min((total_count + page_size - 1) // page_size, max_results // page_size)
-            
-            for page in range(num_pages):
-                params = {
-                    'pageSize': page_size,
-                    'countTotal': 'false',
-                    'query.cond': 'microbiome'
-                }
-                
-                if page > 0 and 'pageToken' in response.json():
-                    params['pageToken'] = response.json()['pageToken']
-                
-                response = requests.get(self.api_url, params=params, timeout=10)
-                response.raise_for_status()
-                
-                studies = response.json().get('studies', [])
-                all_trials.extend(studies)
-                
-                logger.info(f"✅ Page {page + 1}/{num_pages} - Fetched {len(studies)} trials")
-            
-            logger.info(f"✅ Total fetched: {len(all_trials)} trials")
-            return all_trials
-            
+            combined = []
+            for q in self.base_queries:
+                combined.extend(self._fetch_query(q, max_results=max_results))
+
+            # Deduplicate by NCT ID so downstream filters see a clean list
+            deduped = {}
+            for study in combined:
+                nct_id = (
+                    study.get('protocolSection', {})
+                    .get('identificationModule', {})
+                    .get('nctId')
+                ) or f"study-{id(study)}"
+                if nct_id not in deduped:
+                    deduped[nct_id] = study
+
+            logger.info(f"✅ Total fetched (deduped): {len(deduped)} trials")
+            return list(deduped.values())[:max_results]
+
         except Exception as e:
             logger.error(f"❌ Error fetching trials: {e}")
             return []

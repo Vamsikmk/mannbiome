@@ -207,6 +207,8 @@ class BacteriaScorer:
         self.logger.info(f"Patient bacteria to score: {len(patient_data)}")
         
         scored_data = []
+        matched_bacteria = []
+        unmatched_bacteria = []
         
         for idx, row in patient_data.iterrows():
             bacteria_name = row['bacteria_name']
@@ -216,8 +218,11 @@ class BacteriaScorer:
             matches = self._find_bacteria_matches(bacteria_name)
             
             if matches.empty:
-                self.logger.debug(f"  No domain mapping found for: {bacteria_name}")
+                unmatched_bacteria.append(bacteria_name)
+                self.logger.debug(f"  ✗ No domain mapping found for: {bacteria_name}")
                 continue
+            
+            matched_bacteria.append(bacteria_name)
             
             # Calculate impact score for each domain association
             for _, mapping in matches.iterrows():
@@ -249,8 +254,15 @@ class BacteriaScorer:
         
         self.logger.info(f"\n✅ Scoring complete:")
         self.logger.info(f"   Total scored entries: {len(result_df)}")
-        self.logger.info(f"   Bacteria with domain matches: {result_df['bacteria_name'].nunique()}")
-        self.logger.info(f"   Domains identified: {result_df['domain'].nunique()}")
+        self.logger.info(f"   Bacteria with domain matches: {len(matched_bacteria)}/{len(patient_data)} ({len(matched_bacteria)/len(patient_data)*100:.1f}%)")
+        self.logger.info(f"   Domains identified: {result_df['domain'].nunique() if not result_df.empty else 0}")
+        
+        if unmatched_bacteria:
+            self.logger.warning(f"\n⚠️  {len(unmatched_bacteria)} bacteria had no matches:")
+            for bact in unmatched_bacteria[:10]:  # Show first 10
+                self.logger.warning(f"     - {bact}")
+            if len(unmatched_bacteria) > 10:
+                self.logger.warning(f"     ... and {len(unmatched_bacteria) - 10} more")
         
         return result_df
     
@@ -259,35 +271,72 @@ class BacteriaScorer:
         Find bacteria in mapping using flexible matching.
         
         Handles:
-        - Exact matches
+        - Exact matches (case-insensitive)
         - Genus-level matches (if species not found)
-        - Case-insensitive matching
+        - Contains matching (for phylum/family names)
+        - Reverse contains (database entry contains patient bacteria name)
+        - Genus matching in database
         """
-        bacteria_name_lower = bacteria_name.lower()
+        bacteria_name_lower = bacteria_name.lower().strip()
         
-        # Try exact match first (case-insensitive)
+        # Strategy 1: Exact match (case-insensitive)
         exact_matches = self.bacteria_mapping[
             self.bacteria_mapping['bacteria_name'].str.lower() == bacteria_name_lower
         ]
-        
         if not exact_matches.empty:
+            self.logger.debug(f"  ✓ Exact match found for: {bacteria_name}")
             return exact_matches
         
-        # Try genus-level match if input is species-level
+        # Strategy 2: Genus-level match (if input is species-level like "Lactobacillus acidophilus")
         if ' ' in bacteria_name:
-            genus = bacteria_name.split()[0]
+            genus = bacteria_name.split()[0].lower()
             genus_matches = self.bacteria_mapping[
-                self.bacteria_mapping['bacteria_name'].str.lower() == genus.lower()
+                self.bacteria_mapping['bacteria_name'].str.lower() == genus
             ]
             if not genus_matches.empty:
+                self.logger.debug(f"  ✓ Genus match found for: {bacteria_name} -> {genus}")
                 return genus_matches
+            
+            # Strategy 3: Check if database has species-level entries for this genus
+            genus_species_matches = self.bacteria_mapping[
+                self.bacteria_mapping['bacteria_name'].str.lower().str.startswith(genus + ' ')
+            ]
+            if not genus_species_matches.empty:
+                self.logger.debug(f"  ✓ Genus-species match found for: {bacteria_name}")
+                return genus_species_matches
         
-        # Try partial match (bacteria name starts with...)
-        partial_matches = self.bacteria_mapping[
-            self.bacteria_mapping['bacteria_name'].str.lower().str.startswith(bacteria_name_lower.split()[0])
+        # Strategy 4: Partial match - database entry starts with patient bacteria name
+        # (e.g., patient has "Bacteroides", database has "Bacteroides fragilis")
+        starts_with_matches = self.bacteria_mapping[
+            self.bacteria_mapping['bacteria_name'].str.lower().str.startswith(bacteria_name_lower)
         ]
+        if not starts_with_matches.empty:
+            self.logger.debug(f"  ✓ Starts-with match found for: {bacteria_name}")
+            return starts_with_matches
         
-        return partial_matches
+        # Strategy 5: Contains match - for phylum/family level names
+        # (e.g., patient has "Firmicutes", database has entries containing "Firmicutes")
+        contains_matches = self.bacteria_mapping[
+            self.bacteria_mapping['bacteria_name'].str.lower().str.contains(bacteria_name_lower, na=False)
+        ]
+        if not contains_matches.empty:
+            self.logger.debug(f"  ✓ Contains match found for: {bacteria_name}")
+            return contains_matches
+        
+        # Strategy 6: Reverse contains - patient bacteria name contains database entry
+        # (e.g., patient has "Lactobacillus acidophilus probiotic", database has "Lactobacillus acidophilus")
+        reverse_contains_matches = self.bacteria_mapping[
+            self.bacteria_mapping['bacteria_name'].str.lower().apply(
+                lambda db_name: db_name in bacteria_name_lower
+            )
+        ]
+        if not reverse_contains_matches.empty:
+            self.logger.debug(f"  ✓ Reverse contains match found for: {bacteria_name}")
+            return reverse_contains_matches
+        
+        # No matches found
+        self.logger.debug(f"  ✗ No match found for: {bacteria_name}")
+        return pd.DataFrame()
     
     def _calculate_impact_score(self, 
                                  abundance: float, 
@@ -380,6 +429,9 @@ class BacteriaScorer:
                 avg_confidence = domain_data['confidence'].mean()
                 positive_count = (domain_data['impact_score'] > 0).sum()
                 negative_count = (domain_data['impact_score'] < 0).sum()
+                
+                # Debug: Log what we're calculating
+                self.logger.info(f"  Domain: {domain} | Impact: {total_impact:.2f} | Bacteria: {bacteria_count} | +ve: {positive_count} | -ve: {negative_count}")
                 
                 # Find dominant bacteria (highest absolute impact)
                 dominant_idx = domain_data['impact_score'].abs().idxmax()
