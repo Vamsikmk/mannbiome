@@ -65,8 +65,9 @@ const UploadReport = () => {
       const formData = new FormData();
       formData.append('file', selectedFile);
 
+      const apiBaseUrl = process.env.REACT_APP_API_BASE_URL;
       const response = await fetch(
-        `http://localhost:8001/api/customer/${state.customerId}/upload-report`,
+        `${apiBaseUrl}/api/customer/${state.customerId}/upload-report`,
         {
           method: 'POST',
           body: formData,

@@ -6,8 +6,7 @@ import mockDataService from '../data/mockPatients/mockDataService';
 
 class CustomerApiService {
   constructor() {
-    // this.baseURL = 'https://gnss5bq5km.us-east-2.awsapprunner.com';
-    this.baseURL = 'http://127.0.0.1:8001';
+    this.baseURL = process.env.REACT_APP_API_BASE_URL || 'http://127.0.0.1:8001';
     this.currentCustomerId = null;
     this.mockDataService = mockDataService; // Keep as fallback only
   }
