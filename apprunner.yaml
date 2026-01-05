@@ -16,6 +16,7 @@ run:
       - ENVIRONMENT
       - APP_NAME
       - APP_VERSION
+      - ANTHROPIC_API_KEY
   env:
     - name: DATABASE_URL
       value: postgresql://postgres:db_admin@vendor-portal-db.cszf6hop4o2t.us-east-2.rds.amazonaws.com:5432/mannbiome
@@ -33,3 +34,5 @@ run:
       value: 0.0.0.0
     - name: API_PORT
       value: 8001
+    - name: ANTHROPIC_API_KEY
+      value: "PLACEHOLDER_SET_IN_AWS_CONSOLE"
