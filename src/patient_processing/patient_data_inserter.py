@@ -277,18 +277,14 @@ class PatientDataInserter:
             total_impact: Sum of all bacteria impact scores for a domain
         
         Returns:
-            Health status: 'critical', 'poor', 'moderate', 'good', 'excellent'
+            Health status: 'good', 'warning', 'poor' (matches frontend expectations)
         """
-        if total_impact < -15:
-            return 'critical'
-        elif total_impact < -5:
-            return 'poor'
+        if total_impact < -10:
+            return 'poor'  # Critical/Poor conditions
         elif total_impact < 5:
-            return 'moderate'
-        elif total_impact < 15:
-            return 'good'
+            return 'warning'  # Moderate conditions that need attention
         else:
-            return 'excellent'
+            return 'good'  # Good/Excellent conditions
     
     def update_analysis_status(self, upload_id: str, status: str):
         """
