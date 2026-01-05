@@ -34,6 +34,8 @@ import traceback
 
 # Import the cached recommendation service
 from llm_recommendations_cached import CachedRecommendationService
+import numpy as np
+import skbio.diversity.alpha as alpha
 
 # ============================================================================
 # CLINICAL TRIALS SYNONYM DICTIONARY - Domain-Specific Matching
@@ -374,19 +376,98 @@ def _fetch_domain_scores_for_customer(customer_id: int, db: Session):
                 else:
                     normalized_score = 2.5
             
-            # Calculate diversity score using bacteria_count
-            # This represents the number of unique bacteria-domain associations
-            # Normalized to 1-5 scale
-            diversity_score = min(5.0, 1.0 + (bacteria_count / 20.0))
+            # Calculate Shannon diversity for this domain
+            domain_bacteria = _get_domain_bacteria_for_diversity(db, customer_id, domain_id)
+            diversity_score = calculate_shannon_diversity(domain_bacteria) if domain_bacteria else 0.0
             
-            print(f"      -> Score: {normalized_score:.1f}, Diversity: {diversity_score:.1f}, Bacteria: {bacteria_count}")
+            print(f"      -> Score: {normalized_score:.1f}, Shannon Diversity: {diversity_score:.2f}, Bacteria: {bacteria_count}")
             
             by_domain[domain_id] = {
                 "score": round(normalized_score, 1),
-                "diversity": round(diversity_score, 1),
+                "diversity": round(diversity_score, 2),
                 "status": str(r.status) if r.status else "unknown"
             }
     return by_domain
+
+
+def calculate_shannon_diversity(bacteria_list: List[Dict]) -> float:
+    """
+    Calculate Shannon diversity index from bacteria abundance data.
+    Uses scikit-bio's Shannon implementation with natural log (base e).
+    
+    Args:
+        bacteria_list: List of bacteria dicts with 'abundance' or 'relative_abundance' keys
+    
+    Returns:
+        Shannon diversity index (H'). Typical microbiome values: 2-4 (healthy), <2 (low diversity), >4 (high diversity)
+    """
+    if not bacteria_list:
+        return 0.0
+    
+    # Extract abundances
+    abundances = []
+    for bacteria in bacteria_list:
+        abundance = bacteria.get('relative_abundance') or bacteria.get('abundance') or 0
+        abundance = float(abundance)
+        
+        # Convert percentage to fraction if needed (values > 1 are percentages)
+        if abundance > 1.0:
+            abundance = abundance / 100.0
+        
+        if abundance > 0:  # Only include bacteria with non-zero abundance
+            abundances.append(abundance)
+    
+    if not abundances:
+        return 0.0
+    
+    # Calculate Shannon diversity using scikit-bio (base e = natural log)
+    try:
+        shannon_index = alpha.shannon(np.array(abundances), base=np.e)
+        return round(float(shannon_index), 2)
+    except Exception as e:
+        print(f"Error calculating Shannon diversity: {e}")
+        return 0.0
+
+
+def _get_domain_bacteria_for_diversity(db: Session, customer_id: int, domain_id: int) -> List[Dict]:
+    """
+    Get bacteria data for a specific domain to calculate Shannon diversity.
+    Returns list of bacteria dicts with abundance data.
+    """
+    try:
+        # Map domain_id to domain name
+        DOMAIN_ID_TO_NAME = {
+            1: 'gut', 2: 'liver', 3: 'heart', 4: 'skin', 5: 'cognitive', 6: 'aging'
+        }
+        domain_name = DOMAIN_ID_TO_NAME.get(domain_id)
+        if not domain_name:
+            return []
+        
+        # Get patient report
+        r = _latest_patient_report(db, str(customer_id))
+        if not r or not r.bacteria_data:
+            return []
+        
+        # Load domain associations
+        assoc = db.execute(text("""
+            SELECT bacteria_name, domain
+            FROM vectordb.bacteria_domain_associations
+            WHERE domain = :domain_name
+        """), {"domain_name": domain_name}).fetchall()
+        
+        associated_bacteria = {a.bacteria_name.lower() for a in assoc}
+        
+        # Filter bacteria for this domain
+        domain_bacteria = []
+        for item in r.bacteria_data:
+            name = (item or {}).get("bacteria_name", "").strip()
+            if name.lower() in associated_bacteria:
+                domain_bacteria.append(item)
+        
+        return domain_bacteria
+    except Exception as e:
+        print(f"Error getting domain bacteria for diversity: {e}")
+        return []
 
 
 def categorize_bacteria_by_name(bacteria_name: str) -> str:
@@ -455,7 +536,7 @@ def calculate_bacteria_status(abundance: float, evidence_strength: str, category
 
 def calculate_overall_health_score(bact: List[Dict]) -> Dict[str, float]:
     """
-    Calculate overall health scores on a 1-5 scale.
+    Calculate overall health scores.
     
     Score calculation:
     - Based on ratio of beneficial bacteria in good status
@@ -463,19 +544,18 @@ def calculate_overall_health_score(bact: List[Dict]) -> Dict[str, float]:
     - Range: 1-5 (higher is better)
     
     Diversity calculation:
-    - Based on total number of detected bacteria
-    - Normalized to 1-5 scale
+    - Shannon diversity index (H') using actual abundance data
+    - Typical range: 0-5 for microbiome data (2-4 is healthy)
     """
     try:
         if not bact:
-            return {"overall_score": 2.5, "diversity_score": 2.5}
+            return {"overall_score": 2.5, "diversity_score": 0.0}
         
         # Count bacteria categories
         bg = len([b for b in bact if b["category"]=="beneficial" and b["status"]=="good"])
         bt = len([b for b in bact if b["category"]=="beneficial"])
         ph = len([b for b in bact if b["category"]=="pathogenic" and b["status"]=="high"])
         pt = len([b for b in bact if b["category"]=="pathogenic"])
-        total = len(bact)
         
         # Calculate ratios
         beneficial_ratio = (bg / bt) if bt else 0.5  # Default to neutral if no beneficial
@@ -486,16 +566,16 @@ def calculate_overall_health_score(bact: List[Dict]) -> Dict[str, float]:
         base_score = 2.5 + (beneficial_ratio * 2.0) - (pathogenic_concern * 2.0)
         overall_score = max(1.0, min(5.0, base_score))
         
-        # Calculate diversity score (1-5 scale)
-        # More bacteria = higher diversity (cap at 5)
-        diversity_score = min(5.0, 1.0 + (total / 20.0))
+        # Calculate Shannon diversity index from actual abundance data
+        diversity_score = calculate_shannon_diversity(bact)
         
         return {
             "overall_score": round(overall_score, 1),
-            "diversity_score": round(diversity_score, 1),
+            "diversity_score": round(diversity_score, 2),
         }
-    except Exception:
-        return {"overall_score": 2.5, "diversity_score": 2.5}
+    except Exception as e:
+        print(f"Error in calculate_overall_health_score: {e}")
+        return {"overall_score": 2.5, "diversity_score": 0.0}
 
 def group_bacteria_for_carousel(bacteria_analysis: List[Dict]) -> Dict:
     print(f"🔍 group_bacteria_for_carousel received {len(bacteria_analysis)} bacteria")
