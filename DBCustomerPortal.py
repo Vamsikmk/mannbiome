@@ -203,8 +203,9 @@ app.add_middleware(
 # -----------------------------------------------------------------------------
 # Database (single engine to `mannbiome`)
 # -----------------------------------------------------------------------------
-DATABASE_URL = os.getenv("DATABASE_URL") or \
-    "postgresql://postgres:db_admin@vendor-portal-db.cszf6hop4o2t.us-east-2.rds.amazonaws.com:5432/mannbiome"
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise ValueError("DATABASE_URL environment variable is not set. Please configure your .env file.")
 
 engine = None
 SessionLocal = None

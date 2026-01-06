@@ -32,8 +32,15 @@ app.add_middleware(
 )
 
 # Two Database connections
-MANNBIOME_DB_URL = "postgresql://postgres:db_admin@vendor-portal-db.cszf6hop4o2t.us-east-2.rds.amazonaws.com:5432/mannbiome"
-VECTORDB_URL = "postgresql://postgres:db_admin@vendor-portal-db.cszf6hop4o2t.us-east-2.rds.amazonaws.com:5432/vectordb"
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+MANNBIOME_DB_URL = os.getenv("DATABASE_URL")
+VECTORDB_URL = os.getenv("VECTORDB_URL", MANNBIOME_DB_URL.replace("/mannbiome", "/vectordb") if MANNBIOME_DB_URL else None)
+
+if not MANNBIOME_DB_URL:
+    raise ValueError("DATABASE_URL environment variable is not set")
 
 # MannBiome DB connection (for patient_reports)
 try:
