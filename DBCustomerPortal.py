@@ -8,6 +8,7 @@ from sqlalchemy.orm import sessionmaker, Session
 from typing import Dict, List, Tuple, Any, Optional
 from datetime import datetime, date
 import os
+import re
 from dotenv import load_dotenv
 from pathlib import Path
 import shutil
@@ -157,22 +158,25 @@ def _get_all_domain_synonyms(domain: str, include_interventions: bool = False) -
     return [s.lower() for s in synonyms]
 
 def _matches_any_synonym(title: str, synonyms: List[str]) -> bool:
-    """Check if trial title matches any synonym (case-insensitive, partial match)"""
+    """Check if trial title matches any synonym (case-insensitive, word boundary match)"""
     title_lower = title.lower()
     for synonym in synonyms:
-        if synonym in title_lower:
+        # Use word boundaries to avoid matching substrings like "liver" in "delivered"
+        pattern = r'\b' + re.escape(synonym) + r'\b'
+        if re.search(pattern, title_lower):
             return True
     return False
 
 def _filter_trials_by_title_only(trials: List[Dict], query_terms: List[str]) -> List[Dict]:
     """
     Filter trials by title only, using OR logic across all query terms
-    Returns only trials where ANY query term matches in the TITLE field
+    Returns only trials where ANY query term matches in the TITLE field (word boundary match)
     """
     filtered = []
     for trial in trials:
         title = trial.get('title', '').lower()
-        if any(term.lower() in title for term in query_terms):
+        # Use word boundaries to avoid matching substrings
+        if any(re.search(r'\b' + re.escape(term.lower()) + r'\b', title) for term in query_terms):
             filtered.append(trial)
     return filtered
 
@@ -1500,9 +1504,9 @@ def search_trials(
                 if trial_status not in ALLOWED_STATUSES:
                     continue
                 
-                # Check search query against TITLE ONLY
+                # Check search query against TITLE ONLY (word boundary match)
                 title = trial.get('title', '').lower()
-                if any(synonym.lower() in title for synonym in all_query_synonyms):
+                if any(re.search(r'\b' + re.escape(synonym.lower()) + r'\b', title) for synonym in all_query_synonyms):
                     matched_trials.append(trial)
         
         # Apply additional filters
