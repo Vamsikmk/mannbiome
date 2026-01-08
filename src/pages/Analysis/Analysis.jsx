@@ -5,7 +5,12 @@ import './Analysis.css';
 
 const Analysis = () => {
   const { state, openModal } = useAppContext();
-  const { user, healthData } = state;
+  const { user, healthData, loading } = state;
+
+  // Return blank while loading to keep it clean
+  if (loading) {
+    return <div className="content-section"></div>;
+  }
 
   // Helper function to format numbers to 1 decimal place
   const formatScore = (score) => {

@@ -133,15 +133,20 @@ const AppContent = () => {
       )}
       
       <div className="portal-container">
-        <SideNav />
+        {/* Hide sidebar while loading */}
+        {!state.loading && <SideNav />}
         <main className="content-area">
           <Dashboard />
-          <div className="section-divider"></div>
-          <Analysis />
-          <div className="section-divider"></div>
-          <Recommendations />
-          <div className="section-divider"></div>
-          <Download />
+          {!state.loading && (
+            <>
+              <div className="section-divider"></div>
+              <Analysis />
+              <div className="section-divider"></div>
+              <Recommendations />
+              <div className="section-divider"></div>
+              <Download />
+            </>
+          )}
         </main>
       </div>
       <HealthModal />

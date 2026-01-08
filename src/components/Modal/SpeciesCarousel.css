@@ -63,9 +63,9 @@
 /* Keystone Simple List - Just names */
 .keystone-simple-list {
   padding: 20px;
-  background: linear-gradient(135deg, #fffbf0 0%, #fff9e6 100%);
+  background: white;
   border-radius: 12px;
-  border: 1px solid #ffe4a3;
+  border: 1px solid #e0e0e0;
 }
 
 .keystone-names-list {

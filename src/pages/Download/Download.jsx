@@ -6,7 +6,7 @@ import './Download.css';
 
 const Download = () => {
   const { state } = useAppContext();
-  const { user } = state;
+  const { user, loading } = state;
   const [reportType, setReportType] = useState('full');
   const [selectedDomains, setSelectedDomains] = useState({
     cognitive: false,
@@ -40,6 +40,11 @@ const Download = () => {
       setIsSuccess(false);
     }
   }, [error]);
+
+  // Return blank while loading to keep it clean
+  if (loading) {
+    return <div className="content-section"></div>;
+  }
 
   const handleReportTypeChange = (type) => {
     setReportType(type);

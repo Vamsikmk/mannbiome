@@ -5,10 +5,15 @@ import './Recommendations.css';
 
 const Recommendations = () => {
   const { state } = useAppContext();
-  const { user } = state;
+  const { user, loading } = state;
 
   // State for toggling details
   const [expandedItems, setExpandedItems] = useState({});
+
+  // Return blank while loading to keep it clean
+  if (loading) {
+    return <div className="content-section"></div>;
+  }
 
   const toggleDetails = (itemId) => {
     setExpandedItems(prev => ({

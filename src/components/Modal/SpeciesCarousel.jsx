@@ -677,17 +677,6 @@ const SpeciesCarousel = ({ speciesData, recommendations, currentDomain }) => {//
 
   return (
     <div className="species-carousel-container">
-      {/* Keystone Species Legend - Show only if keystone species exist */}
-      {speciesData?.keystone?.species?.length > 0 && (
-        <div className="keystone-legend">
-          <div className="legend-icon">⭐</div>
-          <div className="legend-content">
-            <strong>Keystone Species Detected</strong>
-            <span>These microorganisms have a disproportionately large functional impact on your microbiome health. They are essential for maintaining ecosystem balance and health.</span>
-          </div>
-        </div>
-      )}
-
       {/* ✅ UPDATED: Vertical Species List with Per-Category Pagination */}
       <div className="species-carousel">
         {slides.map((category) => {
@@ -704,18 +693,14 @@ const SpeciesCarousel = ({ speciesData, recommendations, currentDomain }) => {//
           return (
             <div key={category} className="species-category-section">
               {/* Category Title and Status */}
-              <div className="species-category-header" style={category === 'keystone' ? {
-                background: 'linear-gradient(135deg, #fff9e6 0%, #fff3cd 100%)',
-                border: '2px solid #ffc107',
-                boxShadow: '0 2px 8px rgba(255, 193, 7, 0.2)'
-              } : {}}>
-                <h3 className="species-category-title" style={{ color: category === 'keystone' ? '#f57c00' : '#00BFA5' }}>
+              <div className="species-category-header">
+                <h3 className="species-category-title" style={category === 'keystone' ? { color: '#f57c00' } : { color: '#00BFA5' }}>
                   {formatCategoryTitle(category)}
                 </h3>
                 <span 
                   className="species-category-status"
                   style={{ 
-                    background: category === 'keystone' ? '#ffc107' : (status === 'Good' ? '#4CAF50' : status === 'Monitor' ? '#FF5722' : '#FF9800'),
+                    background: category === 'keystone' ? '#f57c00' : (status === 'Good' ? '#4CAF50' : status === 'Monitor' ? '#FF5722' : '#FF9800'),
                     color: 'white'
                   }}
                 >

@@ -7,8 +7,18 @@ import './Dashboard.css';
 
 const Dashboard = () => {
   const { state, openModal } = useAppContext();
-  const { user, healthData } = state;
+  const { user, healthData, loading } = state;
   const [isExpanded, setIsExpanded] = useState(false);
+
+  // Show loading indicator while fetching customer data
+  if (loading) {
+    return (
+      <div className="dashboard-loading">
+        <div className="loading-spinner"></div>
+        <p className="loading-text">Loading your microbiome data...</p>
+      </div>
+    );
+  }
 
   // Helper function to format numbers to 1 decimal place
   const formatScore = (score) => {
