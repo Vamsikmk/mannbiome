@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import './SpeciesCarousel.css';
 
 
@@ -598,8 +598,8 @@ const SpeciesCarousel = ({ speciesData, recommendations, currentDomain }) => {//
   // console.log('📊 SpeciesCarousel received data:', speciesData);
   // console.log('💊 SpeciesCarousel received recommendations:', recommendations); // ← Debug log
 
-  // ✅ FIXED: Handle the correct data structure
-  const categoryOrder = ['bacteria', 'probiotics', 'virus', 'fungi', 'pathogens', 'protozoa'];
+  // ✅ FIXED: Handle the correct data structure - reordered to show keystone at the end
+  const categoryOrder = ['bacteria', 'probiotics', 'virus', 'fungi', 'pathogens', 'protozoa', 'keystone'];
   
   // ✅ FIXED: Check for species array inside each category object
   const slides = categoryOrder.filter(category => {
@@ -635,7 +635,8 @@ const SpeciesCarousel = ({ speciesData, recommendations, currentDomain }) => {//
       'virus': 'Viral Species',
       'fungi': 'Fungal Species',
       'pathogens': 'Pathogenic Species',
-      'protozoa': 'Protozoa Species'
+      'protozoa': 'Protozoa Species',
+      'keystone': '⭐ Keystone Species'
     };
     return titleMap[category] || category.charAt(0).toUpperCase() + category.slice(1);
   };
@@ -676,6 +677,17 @@ const SpeciesCarousel = ({ speciesData, recommendations, currentDomain }) => {//
 
   return (
     <div className="species-carousel-container">
+      {/* Keystone Species Legend - Show only if keystone species exist */}
+      {speciesData?.keystone?.species?.length > 0 && (
+        <div className="keystone-legend">
+          <div className="legend-icon">⭐</div>
+          <div className="legend-content">
+            <strong>Keystone Species Detected</strong>
+            <span>These microorganisms have a disproportionately large functional impact on your microbiome health. They are essential for maintaining ecosystem balance and health.</span>
+          </div>
+        </div>
+      )}
+
       {/* ✅ UPDATED: Vertical Species List with Per-Category Pagination */}
       <div className="species-carousel">
         {slides.map((category) => {
@@ -692,30 +704,46 @@ const SpeciesCarousel = ({ speciesData, recommendations, currentDomain }) => {//
           return (
             <div key={category} className="species-category-section">
               {/* Category Title and Status */}
-              <div className="species-category-header">
-                <h3 className="species-category-title" style={{ color: '#00BFA5' }}>
+              <div className="species-category-header" style={category === 'keystone' ? {
+                background: 'linear-gradient(135deg, #fff9e6 0%, #fff3cd 100%)',
+                border: '2px solid #ffc107',
+                boxShadow: '0 2px 8px rgba(255, 193, 7, 0.2)'
+              } : {}}>
+                <h3 className="species-category-title" style={{ color: category === 'keystone' ? '#f57c00' : '#00BFA5' }}>
                   {formatCategoryTitle(category)}
                 </h3>
                 <span 
                   className="species-category-status"
                   style={{ 
-                    background: status === 'Good' ? '#4CAF50' : status === 'Monitor' ? '#FF5722' : '#FF9800',
+                    background: category === 'keystone' ? '#ffc107' : (status === 'Good' ? '#4CAF50' : status === 'Monitor' ? '#FF5722' : '#FF9800'),
                     color: 'white'
                   }}
                 >
-                  Status: {status}
+                  {category === 'keystone' ? `COUNT: ${allSpecies.length}` : `Status: ${status}`}
                 </span>
               </div>
 
-              {/* Vertical Species Cards */}
-              <div className="species-vertical-list">
-                {pageSpecies.map((speciesItem, index) => (
-                  <SpeciesItem
-                    key={`${category}-${startIdx + index}`}
-                    species={speciesItem}
-                    category={category}
-                  />
-                ))}
+              {/* Vertical Species Cards or List */}
+              <div className={category === 'keystone' ? 'keystone-simple-list' : 'species-vertical-list'}>
+                {category === 'keystone' ? (
+                  // Simple list for keystone species - just names
+                  <ul className="keystone-names-list">
+                    {pageSpecies.map((speciesItem, index) => (
+                      <li key={`${category}-${startIdx + index}`} className="keystone-name-item">
+                        {speciesItem.name}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  // Full cards for other categories
+                  pageSpecies.map((speciesItem, index) => (
+                    <SpeciesItem
+                      key={`${category}-${startIdx + index}`}
+                      species={speciesItem}
+                      category={category}
+                    />
+                  ))
+                )}
               </div>
 
               {/* Pagination Controls */}

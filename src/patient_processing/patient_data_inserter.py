@@ -15,6 +15,9 @@ import os
 from dotenv import load_dotenv
 from typing import Dict, List, Optional, Tuple
 
+# Import keystone species identifier
+from keystone_species import is_keystone_species, get_keystone_category
+
 class PatientDataInserter:
     """
     Handles insertion of patient microbiome data into PostgreSQL
@@ -89,8 +92,18 @@ class PatientDataInserter:
         Returns:
             upload_id: UUID of inserted report
         """
-        # Convert bacteria DataFrame to JSONB format
+        # Convert bacteria DataFrame to JSONB format and add keystone information
         bacteria_data = bacteria_df.to_dict('records')
+        
+        # Enrich bacteria data with keystone species information
+        for bacteria in bacteria_data:
+            bacteria_name = bacteria.get('bacteria_name', '')
+            if bacteria_name:
+                bacteria['is_keystone'] = is_keystone_species(bacteria_name)
+                bacteria['keystone_category'] = get_keystone_category(bacteria_name)
+            else:
+                bacteria['is_keystone'] = False
+                bacteria['keystone_category'] = None
         
         # Generate UUID
         upload_id = str(uuid.uuid4())

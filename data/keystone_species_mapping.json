@@ -1,0 +1,248 @@
+{
+  "keystone_species": [
+    {
+      "species_name": "Faecalibacterium prausnitzii",
+      "category": "Core Gut",
+      "functional_role": "Major butyrate producer, anti-inflammatory",
+      "domains": ["gut", "overall"],
+      "importance": "high"
+    },
+    {
+      "species_name": "Akkermansia muciniphila",
+      "category": "Core Gut",
+      "functional_role": "Mucin degradation, gut barrier maintenance",
+      "domains": ["gut", "overall"],
+      "importance": "high"
+    },
+    {
+      "species_name": "Roseburia intestinalis",
+      "category": "Core Gut",
+      "functional_role": "Butyrate production, epithelial energy",
+      "domains": ["gut", "overall"],
+      "importance": "high"
+    },
+    {
+      "species_name": "Eubacterium rectale",
+      "category": "Core Gut",
+      "functional_role": "SCFA cross-feeding hub",
+      "domains": ["gut", "overall"],
+      "importance": "high"
+    },
+    {
+      "species_name": "Ruminococcus bromii",
+      "category": "Core Gut",
+      "functional_role": "Resistant starch degradation (primary degrader)",
+      "domains": ["gut", "overall"],
+      "importance": "high"
+    },
+    {
+      "species_name": "Bifidobacterium longum",
+      "category": "Gut-Brain",
+      "functional_role": "Tryptophan and GABA metabolism, stress modulation",
+      "domains": ["cognitive", "gut", "overall"],
+      "importance": "high"
+    },
+    {
+      "species_name": "Lactobacillus rhamnosus",
+      "category": "Gut-Brain",
+      "functional_role": "Vagus nerve signaling",
+      "domains": ["cognitive", "gut", "overall"],
+      "importance": "high"
+    },
+    {
+      "species_name": "Coprococcus eutactus",
+      "category": "Gut-Brain",
+      "functional_role": "Neurotransmitter association",
+      "domains": ["cognitive", "gut", "overall"],
+      "importance": "medium"
+    },
+    {
+      "species_name": "Blautia",
+      "category": "Gut-Brain",
+      "functional_role": "Anti-inflammatory SCFA support",
+      "domains": ["cognitive", "gut", "overall"],
+      "importance": "medium"
+    },
+    {
+      "species_name": "Bacteroides thetaiotaomicron",
+      "category": "Metabolic",
+      "functional_role": "Polysaccharide metabolism",
+      "domains": ["gut", "liver", "overall"],
+      "importance": "high"
+    },
+    {
+      "species_name": "Clostridium scindens",
+      "category": "Metabolic",
+      "functional_role": "Secondary bile acid synthesis",
+      "domains": ["liver", "gut", "overall"],
+      "importance": "high"
+    },
+    {
+      "species_name": "Alistipes putredinis",
+      "category": "Metabolic",
+      "functional_role": "Anti-inflammatory metabolism",
+      "domains": ["gut", "liver", "overall"],
+      "importance": "medium"
+    },
+    {
+      "species_name": "Prevotella copri",
+      "category": "Metabolic",
+      "functional_role": "Context-dependent metabolic effects",
+      "domains": ["gut", "overall"],
+      "importance": "medium"
+    },
+    {
+      "species_name": "Eggerthella lenta",
+      "category": "Kidney",
+      "functional_role": "Uremic toxin metabolism",
+      "domains": ["kidney", "overall"],
+      "importance": "high"
+    },
+    {
+      "species_name": "Enterocloster bolteae",
+      "category": "Kidney",
+      "functional_role": "Protein fermentation",
+      "domains": ["kidney", "gut", "overall"],
+      "importance": "medium"
+    },
+    {
+      "species_name": "Clostridium symbiosum",
+      "category": "Kidney",
+      "functional_role": "Indoxyl sulfate production",
+      "domains": ["kidney", "overall"],
+      "importance": "medium"
+    },
+    {
+      "species_name": "Bacteroides fragilis",
+      "category": "Immune",
+      "functional_role": "Immune tolerance via polysaccharide A",
+      "domains": ["gut", "immune", "overall"],
+      "importance": "high"
+    },
+    {
+      "species_name": "Lactobacillus reuteri",
+      "category": "Immune",
+      "functional_role": "Regulatory T-cell induction",
+      "domains": ["gut", "immune", "overall"],
+      "importance": "high"
+    },
+    {
+      "species_name": "Parabacteroides distasonis",
+      "category": "Immune",
+      "functional_role": "Metabolic-immune modulation",
+      "domains": ["gut", "immune", "liver", "overall"],
+      "importance": "medium"
+    },
+    {
+      "species_name": "Fusobacterium nucleatum",
+      "category": "Systemic",
+      "functional_role": "Immune modulation, cancer associations",
+      "domains": ["gut", "overall"],
+      "importance": "medium"
+    },
+    {
+      "species_name": "Porphyromonas gingivalis",
+      "category": "Systemic",
+      "functional_role": "Systemic inflammation, neurodegeneration links",
+      "domains": ["cognitive", "heart", "overall"],
+      "importance": "medium"
+    },
+    {
+      "species_name": "Christensenella minuta",
+      "category": "Emerging",
+      "functional_role": "Metabolic health, leanness association",
+      "domains": ["gut", "liver", "overall"],
+      "importance": "emerging"
+    },
+    {
+      "species_name": "Anaerobutyricum hallii",
+      "category": "Emerging",
+      "functional_role": "Butyrate production, metabolic regulation",
+      "domains": ["gut", "liver", "overall"],
+      "importance": "emerging"
+    },
+    {
+      "species_name": "Butyricicoccus pullicaecorum",
+      "category": "Emerging",
+      "functional_role": "Butyrate production, anti-inflammatory",
+      "domains": ["gut", "overall"],
+      "importance": "emerging"
+    },
+    {
+      "species_name": "Odoribacter splanchnicus",
+      "category": "Emerging",
+      "functional_role": "Metabolic function",
+      "domains": ["gut", "overall"],
+      "importance": "emerging"
+    },
+    {
+      "species_name": "Subdoligranulum variabile",
+      "category": "Emerging",
+      "functional_role": "SCFA production",
+      "domains": ["gut", "overall"],
+      "importance": "emerging"
+    }
+  ],
+  "domain_mapping": {
+    "gut": {
+      "description": "Gut health and digestive function",
+      "keystone_count": 18
+    },
+    "cognitive": {
+      "description": "Brain health and cognitive function",
+      "keystone_count": 5
+    },
+    "liver": {
+      "description": "Liver health and metabolic function",
+      "keystone_count": 6
+    },
+    "heart": {
+      "description": "Cardiovascular health",
+      "keystone_count": 1
+    },
+    "kidney": {
+      "description": "Kidney health and uremic toxin management",
+      "keystone_count": 3
+    },
+    "immune": {
+      "description": "Immune system function",
+      "keystone_count": 3
+    },
+    "overall": {
+      "description": "Overall microbiome health and ecosystem balance",
+      "keystone_count": 26
+    }
+  },
+  "genus_mappings": {
+    "Faecalibacterium": "Core Gut",
+    "Akkermansia": "Core Gut",
+    "Roseburia": "Core Gut",
+    "Eubacterium": "Core Gut",
+    "Ruminococcus": "Core Gut",
+    "Bifidobacterium": "Gut-Brain",
+    "Lactobacillus": "Gut-Brain",
+    "Coprococcus": "Gut-Brain",
+    "Blautia": "Gut-Brain",
+    "Bacteroides": "Metabolic/Immune",
+    "Clostridium": "Metabolic",
+    "Alistipes": "Metabolic",
+    "Prevotella": "Metabolic",
+    "Eggerthella": "Kidney",
+    "Enterocloster": "Kidney",
+    "Parabacteroides": "Immune",
+    "Fusobacterium": "Systemic",
+    "Porphyromonas": "Systemic",
+    "Christensenella": "Emerging",
+    "Anaerobutyricum": "Emerging",
+    "Butyricicoccus": "Emerging",
+    "Odoribacter": "Emerging",
+    "Subdoligranulum": "Emerging"
+  },
+  "metadata": {
+    "version": "1.0.0",
+    "last_updated": "2026-01-07",
+    "source": "Human Microbiome Research Consensus",
+    "total_species": 26,
+    "note": "Keystone species are microorganisms that exert a disproportionately large functional or ecological impact relative to their abundance"
+  }
+}

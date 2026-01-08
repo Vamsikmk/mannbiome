@@ -1,5 +1,100 @@
 /* SpeciesCarousel.css - Vertical Paginated List */
 
+/* Keystone Species Legend */
+.keystone-legend {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 20px;
+  background: linear-gradient(135deg, #fff9e6 0%, #fff3cd 100%);
+  border: 2px solid #ffc107;
+  border-radius: 12px;
+  margin-bottom: 24px;
+  box-shadow: 0 2px 8px rgba(255, 193, 7, 0.2);
+  animation: fadeIn 0.5s ease-in-out;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.keystone-legend .legend-icon {
+  font-size: 32px;
+  line-height: 1;
+  filter: drop-shadow(0 2px 4px rgba(255, 193, 7, 0.3));
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.1);
+  }
+}
+
+.keystone-legend .legend-content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.keystone-legend .legend-content strong {
+  font-size: 16px;
+  font-weight: 600;
+  color: #2C3E50;
+  margin: 0;
+}
+
+.keystone-legend .legend-content span {
+  font-size: 13px;
+  color: #666;
+  line-height: 1.4;
+}
+
+/* Keystone Simple List - Just names */
+.keystone-simple-list {
+  padding: 20px;
+  background: linear-gradient(135deg, #fffbf0 0%, #fff9e6 100%);
+  border-radius: 12px;
+  border: 1px solid #ffe4a3;
+}
+
+.keystone-names-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.keystone-name-item {
+  padding: 8px 0;
+  font-size: 15px;
+  font-weight: 500;
+  color: #2C3E50;
+  font-style: italic;
+  border-bottom: 1px solid #ffe4a3;
+  transition: color 0.2s ease;
+}
+
+.keystone-name-item:last-child {
+  border-bottom: none;
+}
+
+.keystone-name-item:hover {
+  color: #f57c00;
+}
+
 /* Main container */
 .species-carousel-container {
   width: 100%;

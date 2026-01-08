@@ -38,6 +38,12 @@ from llm_recommendations_cached import CachedRecommendationService
 import numpy as np
 import skbio.diversity.alpha as alpha
 
+# Import keystone species identifier
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).parent / 'src' / 'patient_processing'))
+from keystone_species import is_keystone_species, get_keystone_category
+
 # ============================================================================
 # CLINICAL TRIALS SYNONYM DICTIONARY - Domain-Specific Matching
 # ============================================================================
@@ -594,13 +600,16 @@ def group_bacteria_for_carousel(bacteria_analysis: List[Dict]) -> Dict:
             "virus":      {"title": "Viral Species",         "status": "Normal","species": []},
             "fungi":      {"title": "Fungal Species",        "status": "Normal","species": []},
             "protozoa":   {"title": "Protozoa Species",      "status": "Normal","species": []},
+            "keystone":   {"title": "⭐ Keystone Species",   "status": "Important","species": []},
         }
         for b in bacteria_analysis:
             
             bname = (b["bacteria_name"] or "").lower()
             cat = b["category"]
-            print(f"Processing: {b['bacteria_name']} -> {b['category']}")
+            is_keystone = b.get("is_keystone", False)
+            print(f"Processing: {b['bacteria_name']} -> {b['category']} (Keystone: {is_keystone})")
 
+            # Determine target category
             if cat == "beneficial":
                 if any(p in bname for p in ["lactobacillus","bifidobacterium","acidophilus","plantarum",
                                             "rhamnosus","casei","longum","saccharomyces"]):
@@ -628,11 +637,21 @@ def group_bacteria_for_carousel(bacteria_analysis: List[Dict]) -> Dict:
                 "is_beneficial": cat == "beneficial",
                 "range_fill_width": range_fill,
                 "marker_position": marker,
-                "microbewiki_url": b.get("microbewiki_url")
+                "microbewiki_url": b.get("microbewiki_url"),
+                "is_keystone": is_keystone,
+                "keystone_category": b.get("keystone_category")
             }
+            
+            # Add to regular category
             carousel_groups[target]["species"].append(species_data)
+            
+            # Also add to keystone category if it's a keystone species
+            if is_keystone:
+                carousel_groups["keystone"]["species"].append(species_data)
+                
         print(f"🔍 Final carousel groups: {[(k, len(v['species'])) for k, v in carousel_groups.items()]}")
 
+        # Sort and set status for each group
         for g in carousel_groups.values():
             g["species"].sort(key=lambda x: x["current_level"], reverse=True)
             if g["species"]:
@@ -643,6 +662,10 @@ def group_bacteria_for_carousel(bacteria_analysis: List[Dict]) -> Dict:
                 elif normal >= high: g["status"]="Normal"
                 elif high > 0: g["status"]="Monitor"
                 else: g["status"]="Low"
+        
+        # Remove empty groups (except keystone which we always want to check)
+        carousel_groups = {k: v for k, v in carousel_groups.items() if v["species"] or k == "keystone"}
+        
         return carousel_groups
     except Exception as e:
         print(f"[carousel group error] {e}")
@@ -732,10 +755,14 @@ def get_microbiome_data(customer_id: int, db: Session = Depends(get_db)):
                 pct = convert_abundance_to_percentage(abundance)
             
             status = calculate_bacteria_status(abundance, ev, cat)
+            # Check if keystone species
+            is_keystone = is_keystone_species(name)
+            keystone_category = get_keystone_category(name) if is_keystone else None
             analysis.append({
                 "bacteria_name": name, "msp_id": msp_id, "abundance": abundance,
                 "percentage": pct, "evidence_strength": ev, "category": cat,
-                "status": status, "units": units, "microbewiki_url": wiki_url
+                "status": status, "units": units, "microbewiki_url": wiki_url,
+                "is_keystone": is_keystone, "keystone_category": keystone_category
             })
         scores = calculate_overall_health_score(analysis)
         grouped = group_bacteria_for_carousel(analysis)
@@ -759,6 +786,74 @@ def get_microbiome_data(customer_id: int, db: Session = Depends(get_db)):
 @app.get("/api/customer/{customer_id}/microbiome-data", tags=["Portal"])
 def get_customer_microbiome_data_frontend(customer_id: int, db: Session = Depends(get_db)):
     return get_microbiome_data(customer_id, db)
+
+@app.get("/api/customer/{customer_id}/keystone-species", tags=["Portal"])
+def get_customer_keystone_species(customer_id: int, db: Session = Depends(get_db)):
+    """
+    Get list of keystone species detected for a customer.
+    
+    Returns:
+    - List of keystone bacteria with their details
+    - Count of keystone species found
+    - Categories of keystone species present
+    """
+    if db is None:
+        raise HTTPException(status_code=503, detail="Database connection not available")
+    try:
+        participant_id = str(customer_id)
+        row = _latest_patient_report(db, participant_id)
+        if not row:
+            raise HTTPException(status_code=404, detail=f"No microbiome data for customer {customer_id}")
+
+        bacteria_data = (row.bacteria_data or [])
+        keystone_list = []
+        
+        for item in bacteria_data:
+            name = (item or {}).get("bacteria_name", "").strip()
+            if not name:
+                continue
+                
+            # Check if keystone species
+            if is_keystone_species(name):
+                abundance = float((item or {}).get("relative_abundance") or (item or {}).get("abundance") or 0)
+                
+                # Handle percentage conversion
+                if abundance > 1.0:
+                    pct = round(abundance, 2)
+                else:
+                    pct = convert_abundance_to_percentage(abundance)
+                
+                keystone_list.append({
+                    "bacteria_name": name,
+                    "keystone_category": get_keystone_category(name),
+                    "abundance": abundance,
+                    "percentage": pct,
+                    "evidence_strength": (item or {}).get("evidence_strength", "C"),
+                    "msp_id": (item or {}).get("msp_id", ""),
+                    "status": calculate_bacteria_status(abundance, (item or {}).get("evidence_strength", "C"), categorize_bacteria_by_name(name))
+                })
+        
+        # Sort by abundance
+        keystone_list.sort(key=lambda x: x["abundance"], reverse=True)
+        
+        # Get category summary
+        categories = {}
+        for k in keystone_list:
+            cat = k["keystone_category"]
+            if cat:
+                categories[cat] = categories.get(cat, 0) + 1
+        
+        return {
+            "success": True,
+            "customer_id": customer_id,
+            "keystone_species_count": len(keystone_list),
+            "categories_found": categories,
+            "keystone_species": keystone_list
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error retrieving keystone species: {e}")
 
 # -----------------------------------------------------------------------------
 # PATIENT REPORT UPLOAD ENDPOINT
@@ -1199,6 +1294,9 @@ def _species_for_domain(customer_id: int, domain_id: int, db: Session) -> List[D
         cat = categorize_bacteria_by_name(name)
         status = calculate_bacteria_status(abundance, ev, cat)
         microbewiki_url = (item or {}).get("microbewiki_url")
+        # Check if keystone species
+        is_keystone = is_keystone_species(name)
+        keystone_category = get_keystone_category(name) if is_keystone else None
         out.append({
             "bacteria_name": name,
             "msp_id": msp_id,  # Add this line
@@ -1209,6 +1307,8 @@ def _species_for_domain(customer_id: int, domain_id: int, db: Session) -> List[D
             "category": cat,
             "status": status,
             "microbewiki_url": microbewiki_url,
+            "is_keystone": is_keystone,
+            "keystone_category": keystone_category,
             "description": f"Associated with {domain_name} ({next((m.association_type for m in matches if m.domain == domain_name), 'neutral')})"
         })
     return out
