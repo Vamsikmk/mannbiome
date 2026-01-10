@@ -14,11 +14,15 @@ const UploadReport = () => {
   const handleFileSelect = (event) => {
     const file = event.target.files[0];
     if (file) {
-      // Validate file type
-      if (file.type !== 'application/pdf') {
+      // Validate file type (PDF or text files)
+      const validTypes = ['application/pdf', 'text/plain', 'text/tab-separated-values'];
+      const validExtensions = ['.pdf', '.txt', '.tsv'];
+      const fileExtension = file.name.toLowerCase().slice(file.name.lastIndexOf('.'));
+      
+      if (!validTypes.includes(file.type) && !validExtensions.includes(fileExtension)) {
         setUploadStatus({
           type: 'error',
-          message: 'Please select a PDF file'
+          message: 'Please select a PDF, TXT, or TSV file'
         });
         return;
       }
@@ -152,10 +156,10 @@ const UploadReport = () => {
                 <line x1="9" y1="15" x2="15" y2="15"></line>
               </svg>
               <p className="upload-instructions">
-                Click to select a PDF report
+                Click to select a report file
               </p>
               <p className="upload-hint">
-                Maximum file size: 10MB
+                Supported formats: PDF, TXT, TSV (MetaPhlAn) • Max size: 10MB
               </p>
             </div>
           ) : (
@@ -191,7 +195,7 @@ const UploadReport = () => {
           <input
             ref={fileInputRef}
             type="file"
-            accept=".pdf"
+            accept=".pdf,.txt,.tsv"
             onChange={handleFileSelect}
             style={{ display: 'none' }}
           />
