@@ -154,15 +154,15 @@ const HealthModal = () => {
         {domainInfo && (
           <div className="domain-stats-summary">
             <div className="stat-item">
-              <span className="stat-label">Score:</span>
+              <span className="stat-label">Score: </span>
               <span className="stat-value">{domainInfo.score || 'N/A'}</span>
             </div>
             <div className="stat-item">
-              <span className="stat-label">Diversity:</span>
+              <span className="stat-label">Diversity: </span>
               <span className="stat-value">{domainInfo.diversity || 'N/A'}</span>
             </div>
             <div className="stat-item">
-              <span className="stat-label">Status:</span>
+              <span className="stat-label">Status: </span>
               <span className={`stat-value status-${domainInfo.status}`}>
                 {domainInfo.status || 'Unknown'}
               </span>

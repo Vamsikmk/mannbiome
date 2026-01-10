@@ -41,7 +41,7 @@ const Recommendations = () => {
       id: 'fiber',
       title: 'Increase Fiber-Rich Foods',
       description: 'Include more whole grains, legumes, and vegetables in your diet.',
-      reason: 'Supports Ruminococcus bromii growth',
+      reason: 'Supports <i>Ruminococcus bromii</i> growth',
       foods: [
         { name: 'Whole Oats', image: '/assets/images/food_lifestyle/oats.jpeg' },
         { name: 'Red Lentils', image: '/assets/images/food_lifestyle/lentils.jpeg' },
@@ -59,7 +59,7 @@ const Recommendations = () => {
       id: 'prebiotic',
       title: 'Add Prebiotic Foods',
       description: 'Incorporate garlic, onions, and leeks to support beneficial bacteria.',
-      reason: 'Enhances Faecalibacterium prausnitzii',
+      reason: 'Enhances <i>Faecalibacterium prausnitzii</i>',
       foods: [
         { name: 'Garlic', image: '/assets/images/food_lifestyle/garlic.jpeg' },
         { name: 'Onions', image: '/assets/images/food_lifestyle/onions.jpeg' },
@@ -122,14 +122,14 @@ const Recommendations = () => {
       reason: 'Not detected in sample',
       image: '/assets/images/probiotics_images/Bifidobacterium_Probiotic_Complex.jpeg',
       strains: [
-        'Bifidobacterium longum (5 billion CFU)',
-        'Bifidobacterium bifidum (3 billion CFU)',
-        'Bifidobacterium infantis (2 billion CFU)',
-        'Bifidobacterium breve (2 billion CFU)'
+        '<i>Bifidobacterium longum</i> (5 billion CFU)',
+        '<i>Bifidobacterium bifidum</i> (3 billion CFU)',
+        '<i>Bifidobacterium infantis</i> (2 billion CFU)',
+        '<i>Bifidobacterium breve</i> (2 billion CFU)'
       ],
-      details: 'A comprehensive probiotic formula specifically designed to restore and maintain healthy levels of Bifidobacterium in the gut microbiome. This blend supports digestive health, immune function, and helps maintain intestinal barrier integrity.',
+      details: 'A comprehensive probiotic formula specifically designed to restore and maintain healthy levels of <i>Bifidobacterium</i> in the gut microbiome. This blend supports digestive health, immune function, and helps maintain intestinal barrier integrity.',
       clinicalTrials: 'The specific strains in this formula have been researched in 12 clinical trials, demonstrating effectiveness for IBS symptom relief, improved digestive function, and enhanced immune response.',
-      keyStudy: '"Bifidobacterium supplementation reduces inflammatory markers in subjects with metabolic syndrome" (Journal of Nutritional Science, 2023)',
+      keyStudy: '"<i>Bifidobacterium</i> supplementation reduces inflammatory markers in subjects with metabolic syndrome" (Journal of Nutritional Science, 2023)',
       storage: 'Store in a cool, dry place below 25°C (77°F). Refrigeration recommended after opening to maintain potency. Shelf life: 24 months when sealed, 3 months after opening if refrigerated.'
     },
     {
@@ -139,13 +139,13 @@ const Recommendations = () => {
       reason: 'Not detected in sample',
       image: '/assets/images/probiotics_images/Akkermansia_Probiotic_Blend.jpeg',
       strains: [
-        'Akkermansia muciniphila (3 billion CFU)',
-        'Faecalibacterium prausnitzii (2 billion CFU)',
-        'Roseburia intestinalis (1 billion CFU)'
+        '<i>Akkermansia muciniphila</i> (3 billion CFU)',
+        '<i>Faecalibacterium prausnitzii</i> (2 billion CFU)',
+        '<i>Roseburia intestinalis</i> (1 billion CFU)'
       ],
-      details: 'A specialized probiotic formula containing Akkermansia muciniphila, a keystone species that supports the gut mucosal lining and helps maintain proper barrier function. This supplement is designed to improve metabolic health and gut integrity.',
-      clinicalTrials: 'Akkermansia muciniphila has been the subject of 8 human clinical trials, showing positive effects on metabolic parameters and gut barrier function. This specific formulation was evaluated in a 3-month study with 120 participants.',
-      keyStudy: '"Akkermansia muciniphila supplementation improves metabolic parameters and reinforces gut barrier function" (Nature Metabolism, 2022)',
+      details: 'A specialized probiotic formula containing <i>Akkermansia muciniphila</i>, a keystone species that supports the gut mucosal lining and helps maintain proper barrier function. This supplement is designed to improve metabolic health and gut integrity.',
+      clinicalTrials: '<i>Akkermansia muciniphila</i> has been the subject of 8 human clinical trials, showing positive effects on metabolic parameters and gut barrier function. This specific formulation was evaluated in a 3-month study with 120 participants.',
+      keyStudy: '"<i>Akkermansia muciniphila</i> supplementation improves metabolic parameters and reinforces gut barrier function" (Nature Metabolism, 2022)',
       storage: 'Refrigeration required (2-8°C or 35-46°F). Do not freeze. Keep away from moisture and direct sunlight. The specialized encapsulation technology maintains viability for 14 days at room temperature during shipping.'
     },
     {
@@ -155,15 +155,15 @@ const Recommendations = () => {
       reason: 'Low levels detected',
       image: '/assets/images/probiotics_images/Lactobacillus_Probiotic.jpeg',
       strains: [
-        'Lactobacillus acidophilus (5 billion CFU)',
-        'Lactobacillus plantarum (4 billion CFU)',
-        'Lactobacillus rhamnosus (3 billion CFU)',
-        'Lactobacillus casei (2 billion CFU)',
-        'Lactobacillus gasseri (1 billion CFU)'
+        '<i>Lactobacillus acidophilus</i> (5 billion CFU)',
+        '<i>Lactobacillus plantarum</i> (4 billion CFU)',
+        '<i>Lactobacillus rhamnosus</i> (3 billion CFU)',
+        '<i>Lactobacillus casei</i> (2 billion CFU)',
+        '<i>Lactobacillus gasseri</i> (1 billion CFU)'
       ],
-      details: 'A diverse Lactobacillus probiotic complex designed to enhance digestive function and immune health. This formula addresses occasional digestive discomfort, supports nutrient absorption, and helps maintain a balanced microbiome.',
-      clinicalTrials: 'The Lactobacillus strains in this formula have been studied in over 20 clinical trials. Our specific blend has been evaluated in a 6-month study with 250 participants, showing significant improvements in digestive symptoms and immune markers.',
-      keyStudy: '"Multi-strain Lactobacillus supplementation reduces digestive symptoms and inflammatory markers: A randomized controlled trial" (Gut Microbiome, 2023)',
+      details: 'A diverse <i>Lactobacillus</i> probiotic complex designed to enhance digestive function and immune health. This formula addresses occasional digestive discomfort, supports nutrient absorption, and helps maintain a balanced microbiome.',
+      clinicalTrials: 'The <i>Lactobacillus</i> strains in this formula have been studied in over 20 clinical trials. Our specific blend has been evaluated in a 6-month study with 250 participants, showing significant improvements in digestive symptoms and immune markers.',
+      keyStudy: '"Multi-strain <i>Lactobacillus</i> supplementation reduces digestive symptoms and inflammatory markers: A randomized controlled trial" (Gut Microbiome, 2023)',
       storage: 'Store in a cool, dry place below 25°C (77°F). No refrigeration necessary due to patented shelf-stable technology. Keep sealed until use. Best if used within 2 years of manufacture date.'
     },
     {
@@ -173,15 +173,15 @@ const Recommendations = () => {
       reason: 'Enhancement recommended',
       image: '/assets/images/probiotics_images/Bacillus_Probiotic.jpeg',
       strains: [
-        'Bacillus subtilis (3 billion CFU)',
-        'Bacillus coagulans (4 billion CFU)',
-        'Bacillus clausii (2 billion CFU)',
-        'Bacillus licheniformis (1 billion CFU)'
+        '<i>Bacillus subtilis</i> (3 billion CFU)',
+        '<i>Bacillus coagulans</i> (4 billion CFU)',
+        '<i>Bacillus clausii</i> (2 billion CFU)',
+        '<i>Bacillus licheniformis</i> (1 billion CFU)'
       ],
-      details: 'A potent spore-forming probiotic formula featuring Bacillus species that can survive harsh digestive conditions. This formula supports immune function, protein digestion, and helps maintain a balanced microbiome even during periods of stress or antibiotic use.',
-      clinicalTrials: 'The Bacillus strains in this formula have been studied in 15 clinical trials, with particular focus on immune function and microbiome resilience. Our specific combination has been validated in a 4-month study involving 180 participants.',
-      keyStudy: '"Bacillus-based probiotics enhance immune resilience and microbiome stability during antibiotic therapy" (Frontiers in Immunology, 2023)',
-      storage: 'Shelf-stable at room temperature due to the natural spore-forming properties of Bacillus species. Store in a cool, dry place below 30°C (86°F). Resistant to heat and humidity. Shelf life: 36 months when properly stored.'
+      details: 'A potent spore-forming probiotic formula featuring <i>Bacillus</i> species that can survive harsh digestive conditions. This formula supports immune function, protein digestion, and helps maintain a balanced microbiome even during periods of stress or antibiotic use.',
+      clinicalTrials: 'The <i>Bacillus</i> strains in this formula have been studied in 15 clinical trials, with particular focus on immune function and microbiome resilience. Our specific combination has been validated in a 4-month study involving 180 participants.',
+      keyStudy: '"<i>Bacillus</i>-based probiotics enhance immune resilience and microbiome stability during antibiotic therapy" (Frontiers in Immunology, 2023)',
+      storage: 'Shelf-stable at room temperature due to the natural spore-forming properties of <i>Bacillus</i> species. Store in a cool, dry place below 30°C (86°F). Resistant to heat and humidity. Shelf life: 36 months when properly stored.'
     }
   ];
 
@@ -198,8 +198,8 @@ const Recommendations = () => {
         'Acacia Fiber (1g per serving)',
         'Green Banana Resistant Starch (1g per serving)'
       ],
-      details: 'A premium blend of inulin and other soluble fibers that serve as food for beneficial gut bacteria. This prebiotic formula helps increase populations of Bifidobacteria and other beneficial microbes while supporting regular digestive function.',
-      clinicalTrials: 'This prebiotic formula has been evaluated in 10 clinical trials, demonstrating significant increases in beneficial bacteria, particularly Bifidobacteria and Faecalibacterium, within 14 days of regular use.',
+      details: 'A premium blend of inulin and other soluble fibers that serve as food for beneficial gut bacteria. This prebiotic formula helps increase populations of <i>Bifidobacteria</i> and other beneficial microbes while supporting regular digestive function.',
+      clinicalTrials: 'This prebiotic formula has been evaluated in 10 clinical trials, demonstrating significant increases in beneficial bacteria, particularly <i>Bifidobacteria</i> and <i>Faecalibacterium</i>, within 14 days of regular use.',
       keyStudy: '"Multi-component prebiotic fiber supplementation increases beneficial bacteria and improves markers of gut barrier function" (Microbiome, 2022)',
       storage: 'Store in a cool, dry place with container tightly closed. Protect from humidity and moisture. No refrigeration required. Best used within 2 years of manufacture date.'
     },
@@ -408,30 +408,30 @@ const Recommendations = () => {
                         {renderExpandIcon(product.id)}
                       </div>
                       <div className="item-description">{product.description}</div>
-                      <span className="reason-tag">{product.reason}</span>
+                      <span className="reason-tag" dangerouslySetInnerHTML={{ __html: product.reason }}></span>
                     </div>
                   </div>
                   <div className={`product-details ${expandedItems[product.id] ? 'active' : ''}`}>
                     <div className="detail-section">
                       <div className="detail-title">Description</div>
-                      <div className="detail-content">{product.details}</div>
+                      <div className="detail-content" dangerouslySetInnerHTML={{ __html: product.details }}></div>
                     </div>
                     <div className="detail-section">
                       <div className="detail-title">Probiotic Strains</div>
                       <ul className="detail-list">
                         {product.strains.map((strain, index) => (
-                          <li key={index}>{strain}</li>
+                          <li key={index} dangerouslySetInnerHTML={{ __html: strain }}></li>
                         ))}
                       </ul>
                     </div>
                     <div className="detail-section">
                       <div className="detail-title">Clinical Trials</div>
-                      <div className="detail-content">{product.clinicalTrials}</div>
-                      <div className="trials-info">{product.keyStudy}</div>
+                      <div className="detail-content" dangerouslySetInnerHTML={{ __html: product.clinicalTrials }}></div>
+                      <div className="trials-info" dangerouslySetInnerHTML={{ __html: product.keyStudy }}></div>
                     </div>
                     <div className="detail-section">
                       <div className="detail-title">Storage Instructions</div>
-                      <div className="detail-content">{product.storage}</div>
+                      <div className="detail-content" dangerouslySetInnerHTML={{ __html: product.storage }}></div>
                     </div>
                   </div>
                 </div>
@@ -465,7 +465,7 @@ const Recommendations = () => {
                   <div className={`product-details ${expandedItems[supplement.id] ? 'active' : ''}`}>
                     <div className="detail-section">
                       <div className="detail-title">Description</div>
-                      <div className="detail-content">{supplement.details}</div>
+                      <div className="detail-content" dangerouslySetInnerHTML={{ __html: supplement.details }}></div>
                     </div>
                     <div className="detail-section">
                       <div className="detail-title">Key Ingredients</div>
@@ -477,8 +477,8 @@ const Recommendations = () => {
                     </div>
                     <div className="detail-section">
                       <div className="detail-title">Clinical Trials</div>
-                      <div className="detail-content">{supplement.clinicalTrials}</div>
-                      <div className="trials-info">{supplement.keyStudy}</div>
+                      <div className="detail-content" dangerouslySetInnerHTML={{ __html: supplement.clinicalTrials }}></div>
+                      <div className="trials-info" dangerouslySetInnerHTML={{ __html: supplement.keyStudy }}></div>
                     </div>
                     <div className="detail-section">
                       <div className="detail-title">Storage Instructions</div>

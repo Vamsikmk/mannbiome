@@ -153,6 +153,11 @@
   gap: 6px;
 }
 
+.species-name i {
+  font-style: italic !important;
+  font-weight: 600;
+}
+
 .species-name-link {
   background: none;
   border: none;

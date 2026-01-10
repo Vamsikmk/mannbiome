@@ -140,7 +140,7 @@ const SpeciesItem = ({ species, category }) => {
     <div className="species-item">
       <div className="species-header">
         <h4 className="species-name">
-          {species.name}
+          <i>{species.name}</i>
           {species.microbewiki_url && (
             <button 
               className="species-name-link"
