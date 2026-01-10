@@ -35,6 +35,38 @@ Write-Info "Account: $AWS_ACCOUNT_ID"
 Write-Info "Region: $AWS_REGION"
 Write-Info ""
 
+# Check if on main branch
+Write-Info "Checking Git branch..."
+try {
+    $currentBranch = git rev-parse --abbrev-ref HEAD 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "Failed to get current Git branch. Are you in a Git repository?"
+        exit 1
+    }
+    
+    Write-Info "Current branch: $currentBranch"
+    
+    if ($currentBranch -ne "main") {
+        Write-Error "=========================================="
+        Write-Error "DEPLOYMENT BLOCKED"
+        Write-Error "=========================================="
+        Write-Error "You are on branch: $currentBranch"
+        Write-Error "Deployments are only allowed from the 'main' branch."
+        Write-Error ""
+        Write-Info "To deploy, please:"
+        Write-Info "  1. Switch to main: git checkout main"
+        Write-Info "  2. Merge your changes: git merge $currentBranch"
+        Write-Info "  3. Run deployment again"
+        Write-Error ""
+        exit 1
+    }
+    
+    Write-Success "On main branch - proceeding with deployment"
+} catch {
+    Write-Error "Failed to verify Git branch"
+    exit 1
+}
+
 # Check if AWS CLI is configured
 Write-Info "Checking AWS credentials..."
 try {
