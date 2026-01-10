@@ -222,30 +222,28 @@ const Dashboard = () => {
               </div>
             </div>
             
-            <div className="health-section good-domains">
-              <h2 className="domains-title">Strong Performing Areas</h2>
-              
-              <div className="health-items-wrapper">
-                {goodDomains.length > 0 ? goodDomains.map((domain) => (
-                  <div 
-                    key={domain.id}
-                    className="health-item good-area" 
-                    onClick={() => handleDomainClick(domain.id, domain.label)}
-                  >
-                    <div className="health-icon">
-                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        {domain.icon}
-                      </svg>
+            {goodDomains.length > 0 && (
+              <div className="health-section good-domains">
+                <h2 className="domains-title">Strong Performing Areas</h2>
+                
+                <div className="health-items-wrapper">
+                  {goodDomains.map((domain) => (
+                    <div 
+                      key={domain.id}
+                      className="health-item good-area" 
+                      onClick={() => handleDomainClick(domain.id, domain.label)}
+                    >
+                      <div className="health-icon">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          {domain.icon}
+                        </svg>
+                      </div>
+                      <span className="health-text">{domain.label}</span>
                     </div>
-                    <span className="health-text">{domain.label}</span>
-                  </div>
-                )) : (
-                  <div className="no-domains-message">
-                    <p>Focus on improving your health domains to see them here.</p>
-                  </div>
-                )}
+                  ))}
+                </div>
               </div>
-            </div>
+            )}
           </div>
         </div>
       </div>

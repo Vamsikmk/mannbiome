@@ -118,6 +118,8 @@
     justify-content: center;
     gap: 30px;
     width: 100%;
+    max-width: 1000px;
+    margin: 0 auto;
 }
 
 .health-section {
@@ -126,7 +128,7 @@
     border-radius: 8px;
     background-color: #f9f9f9;
     width: 100%;
-    max-width: 300px;
+    min-width: 300px;
 }
 
 .domains-title {
