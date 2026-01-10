@@ -31,23 +31,38 @@ const ClinicalTrials = () => {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [expandedTrials, setExpandedTrials] = useState({});
-  const [viewType, setViewType] = useState('all'); // all, domain, personalized, search
   const [currentPage, setCurrentPage] = useState(1); // Pagination - current page number
     // ALL FILTERS (applied locally on cached data)
   const [filters, setFilters] = useState({
-    domain: 'gut',
+    domain: 'all',
     status: 'all',           // all, open, pending, closed
     sponsor: '',             // sponsor name selection
     location: ''             // location selection from dropdown
   });
 
-  // FETCH TRIALS ONCE per view type
+  // FETCH TRIALS - Load all or domain-specific
   const loadTrialsForView = useCallback(async () => {
     try {
       setLoading(true);
       let response;
 
-      if (viewType === 'domain') {
+      if (filters.domain === 'all') {
+        // Load all trials (fetch once, cache)
+        if (cachedTrials.all.length === 0) {
+          response = await apiService.getAllClinicalTrials(10000);
+          
+          if (response.success) {
+            const uniqueTrials = deduplicateTrials(response.trials || []);
+            setCachedTrials(prev => ({
+              ...prev,
+              all: uniqueTrials
+            }));
+            setCurrentViewTrials(uniqueTrials);
+          }
+        } else {
+          setCurrentViewTrials(cachedTrials.all);
+        }
+      } else {
         // Load domain-specific trials (fetch once, cache by domain)
         if (!cachedTrials.domain[filters.domain]) {
           response = await apiService.getDomainClinicalTrials(
@@ -66,41 +81,6 @@ const ClinicalTrials = () => {
         } else {
           setCurrentViewTrials(cachedTrials.domain[filters.domain]);
         }
-      } else if (viewType === 'personalized' && user?.customer_id) {
-        // Load customer-personalized trials (fetch once, cache)
-        if (cachedTrials.personalized.length === 0) {
-          response = await apiService.getCustomerClinicalTrials(
-            user.customer_id,
-            10000
-          );
-          
-          if (response.success) {
-            const uniqueTrials = deduplicateTrials(response.trials || []);
-            setCachedTrials(prev => ({
-              ...prev,
-              personalized: uniqueTrials
-            }));
-            setCurrentViewTrials(uniqueTrials);
-          }
-        } else {
-          setCurrentViewTrials(cachedTrials.personalized);
-        }
-      } else if (viewType === 'all') {
-        // Load all trials (fetch once, cache)
-        if (cachedTrials.all.length === 0) {
-          response = await apiService.getAllClinicalTrials(10000);
-          
-          if (response.success) {
-            const uniqueTrials = deduplicateTrials(response.trials || []);
-            setCachedTrials(prev => ({
-              ...prev,
-              all: uniqueTrials
-            }));
-            setCurrentViewTrials(uniqueTrials);
-          }
-        } else {
-          setCurrentViewTrials(cachedTrials.all);
-        }
       }
     } catch (error) {
       console.error('Error loading trials:', error);
@@ -108,7 +88,7 @@ const ClinicalTrials = () => {
     } finally {
       setLoading(false);
     }
-  }, [viewType, filters.domain, user?.customer_id, cachedTrials.domain, cachedTrials.personalized, cachedTrials.all]);
+  }, [filters.domain, cachedTrials.domain, cachedTrials.all]);
 
   // Deduplicate trials by nct_id
   const deduplicateTrials = useCallback((trials) => {
@@ -121,10 +101,10 @@ const ClinicalTrials = () => {
     return Array.from(trialsMap.values());
   }, []);
 
-  // Load trials on mount and when view type changes
+  // Load trials on mount and when domain changes
   useEffect(() => {
     loadTrialsForView();
-  }, [viewType, filters.domain, loadTrialsForView]);
+  }, [filters.domain, loadTrialsForView]);
 
   // Extract available filter options from loaded trials
   const availableFilters = useMemo(() => {
@@ -249,17 +229,6 @@ const ClinicalTrials = () => {
 
   const totalPages = Math.ceil(filteredTrials.length / TRIALS_PER_PAGE);
 
-  const handleViewChange = (newView) => {
-    setViewType(newView);
-    setSearchTerm('');
-    setFilters(prev => ({
-      ...prev,
-      status: 'all',
-      sponsor: '',
-      location: ''
-    }));
-  };
-
   const handleSearch = (e) => {
     setSearchTerm(e.target.value);
   };
@@ -302,9 +271,8 @@ const ClinicalTrials = () => {
 
   const resetFilters = () => {
     setSearchTerm('');
-    setViewType('all');
     setFilters({
-      domain: 'gut',
+      domain: 'all',
       status: 'all',
       sponsor: '',
       location: ''
@@ -379,30 +347,6 @@ const ClinicalTrials = () => {
           </p>
         </div>
 
-        {/* View Type Selection */}
-        <div className="view-type-selector">
-          <button 
-            className={`view-btn ${viewType === 'all' ? 'active' : ''}`}
-            onClick={() => handleViewChange('all')}
-          >
-            All Trials
-          </button>
-          <button 
-            className={`view-btn ${viewType === 'domain' ? 'active' : ''}`}
-            onClick={() => handleViewChange('domain')}
-          >
-            By Domain
-          </button>
-          {user?.customer_id && (
-            <button 
-              className={`view-btn ${viewType === 'personalized' ? 'active' : ''}`}
-              onClick={() => handleViewChange('personalized')}
-            >
-              For You
-            </button>
-          )}
-        </div>
-
         {/* Search and Filters */}
         <div className="search-filter-container">
           <div className="search-bar">
@@ -428,21 +372,20 @@ const ClinicalTrials = () => {
 
           {/* FILTER CONTROLS */}
           <div className="filter-controls">
-            {/* Domain Filter (only in domain view) */}
-            {viewType === 'domain' && (
-              <select 
-                value={filters.domain} 
-                onChange={(e) => handleFilterChange('domain', e.target.value)}
-                title="Filter by health domain"
-              >
-                <option value="gut">Gut Health</option>
-                <option value="liver">Liver Health</option>
-                <option value="heart">Heart Health</option>
-                <option value="cognitive">Cognitive Health</option>
-                <option value="aging">Aging & Longevity</option>
-                <option value="skin">Skin Health</option>
-              </select>
-            )}
+            {/* Domain Filter */}
+            <select 
+              value={filters.domain} 
+              onChange={(e) => handleFilterChange('domain', e.target.value)}
+              title="Filter by health domain"
+            >
+              <option value="all">All Domains</option>
+              <option value="gut">Gut Health</option>
+              <option value="liver">Liver Health</option>
+              <option value="heart">Heart Health</option>
+              <option value="cognitive">Cognitive Health</option>
+              <option value="aging">Aging & Longevity</option>
+              <option value="skin">Skin Health</option>
+            </select>
 
             {/* Status Filter */}
             <select 
@@ -497,10 +440,7 @@ const ClinicalTrials = () => {
 
         {/* Results Summary */}
         <div className="results-summary">
-          <p>Showing <strong>{filteredTrials.length}</strong> clinical trials (of {currentViewTrials.length} total in {viewType === 'domain' ? filters.domain : viewType} view)</p>
-          {viewType === 'personalized' && (
-            <p className="personalization-note">✨ Personalized based on your health profile</p>
-          )}
+          <p>Showing <strong>{filteredTrials.length}</strong> clinical trials (of {currentViewTrials.length} total in {filters.domain === 'all' ? 'all domains' : filters.domain + ' view'})</p>
           {Object.values(filters).some(f => f !== 'all' && f !== 0 && f !== 999999 && f !== '') && (
             <p className="filters-applied-note">🔍 {Object.entries(filters).filter(([, v]) => v !== 'all' && v !== 0 && v !== 999999 && v !== '').length} filter(s) applied</p>
           )}

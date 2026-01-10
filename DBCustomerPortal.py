@@ -91,28 +91,60 @@ CLINICAL_TRIALS_SYNONYMS = {
             "memory function", "executive function", "attention", "learning"
         ]
     },
-    "kidney": {
+    "heart": {
         "core_terms": [
-            "kidney health", "renal health", "renal function"
+            "heart health", "cardiovascular health", "cardiac health", "vascular health",
+            "cardiometabolic health", "cardiovascular risk"
         ],
         "disease_specific": [
-            "chronic kidney disease", "ckd", "acute kidney injury", "aki", 
-            "diabetic nephropathy", "hypertensive nephropathy"
+            "coronary artery disease", "cad", "atherosclerosis", "ischemic heart disease",
+            "myocardial infarction", "heart attack", "heart failure", "cardiomyopathy",
+            "angina", "arrhythmia", "atrial fibrillation", "stroke",
+            "peripheral artery disease", "pad"
         ],
-        "gut_kidney_axis": [
-            "gut-kidney axis", "microbiome-derived uremic toxins"
+        "risk_factors": [
+            "type 2 diabetes", "type 2 diabetes mellitus", "insulin resistance",
+            "metabolic syndrome", "obesity", "central obesity", "dyslipidemia",
+            "hyperlipidemia", "hypertension", "high blood pressure", "prediabetes"
+        ],
+        "biomarkers": [
+            "carotid intima-media thickness", "cimt", "coronary artery calcium", "cac",
+            "troponin", "bnp", "nt-probnp"
+        ],
+        "microbiome_terms": [
+            "gut microbiome", "gut microbiota", "intestinal microbiome",
+            "gut dysbiosis", "microbiome modulation"
         ]
     },
-    "cardiometabolic": {
+    "skin": {
         "core_terms": [
-            "cardiovascular health", "cardiometabolic health", "metabolic health"
+            "skin health", "skin microbiome", "skin microbiota", "cutaneous microbiome",
+            "cutaneous microbiota", "dermal microbiome", "skin dysbiosis"
         ],
-        "disease_specific": [
-            "type 2 diabetes", "type 2 diabetes mellitus", "insulin resistance", 
-            "metabolic syndrome", "obesity", "dyslipidemia", "hypertension"
+        "conditions": [
+            "acne", "acne vulgaris", "atopic dermatitis", "eczema", "psoriasis",
+            "rosacea", "seborrheic dermatitis", "dandruff", "hidradenitis suppurativa"
         ],
-        "microbiome_links": [
-            "microbiome and metabolism", "scfa metabolism", "tmao"
+        "outcomes": [
+            "wound healing", "skin barrier", "transepidermal water loss", "tewl",
+            "pruritus", "skin inflammation"
+        ],
+        "gut_skin_axis": [
+            "gut-skin axis", "topical probiotic",
+            "topical microbiome therapy", "microbiome-based skincare"
+        ]
+    },
+    "aging": {
+        "core_terms": [
+            "aging", "ageing", "healthy aging", "healthy ageing", "longevity",
+            "lifespan", "healthspan"
+        ],
+        "conditions": [
+            "frailty", "sarcopenia", "muscle loss", "physical function", "mobility",
+            "gait speed", "grip strength", "falls", "immunosenescence", "inflammaging"
+        ],
+        "populations": [
+            "older adults", "elderly", "geriatric", "age-related", "age-associated"
         ]
     },
     "intervention": {
@@ -140,14 +172,19 @@ def _get_all_domain_synonyms(domain: str, include_interventions: bool = False) -
     # Map aliases
     domain_map = {
         "gut": "gut",
-        "heart": "cardiometabolic",
-        "cardiovascular": "cardiometabolic",
+        "heart": "heart",
+        "cardiovascular": "heart",
+        "cardiac": "heart",
         "brain": "cognitive",
         "neuro": "cognitive",
-        "kidney": "kidney",
-        "renal": "kidney",
         "liver": "liver",
-        "hepatic": "liver"
+        "hepatic": "liver",
+        "skin": "skin",
+        "cutaneous": "skin",
+        "dermal": "skin",
+        "aging": "aging",
+        "ageing": "aging",
+        "longevity": "aging"
     }
     
     domain_key = domain_map.get(domain_lower, domain_lower)
