@@ -97,6 +97,114 @@ const ConfidenceTooltip = ({ level, className = "" }) => {
     </div>
   );
 };
+
+// Abundance Level Tooltip Component
+const AbundanceLevelTooltip = ({ status, percentage }) => {
+  const [isVisible, setIsVisible] = useState(false);
+
+  const getAbundanceInfo = (status) => {
+    switch (status?.toLowerCase()) {
+      case 'good':
+        return {
+          title: 'Optimal Level',
+          description: 'This bacteria is present at a healthy level that supports your wellbeing. The green indicator shows your current abundance is within the beneficial range.',
+          color: '#4CAF50'
+        };
+      case 'normal':
+        return {
+          title: 'Normal Level',
+          description: 'This bacteria is present at a typical level. The orange indicator shows your abundance is within the normal range, neither particularly high nor low.',
+          color: '#FF9800'
+        };
+      case 'low':
+        return {
+          title: 'Below Optimal',
+          description: 'This bacteria is detected at lower than optimal levels. The red indicator suggests you may benefit from interventions to increase this bacterial population.',
+          color: '#FF5722'
+        };
+      case 'high':
+        return {
+          title: 'Above Normal',
+          description: 'This bacteria is present at elevated levels. The red indicator shows higher than typical abundance, which may require attention depending on the bacteria type.',
+          color: '#FF5722'
+        };
+      default:
+        return {
+          title: 'Abundance Level',
+          description: 'This visual indicator shows where your bacteria level falls on the Low to High spectrum.',
+          color: '#666'
+        };
+    }
+  };
+
+  const abundanceInfo = getAbundanceInfo(status);
+
+  return (
+    <div 
+      style={{ position: 'relative', width: '100%', cursor: 'help' }}
+      onMouseEnter={() => setIsVisible(true)}
+      onMouseLeave={() => setIsVisible(false)}
+    >
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: '8px',
+        marginBottom: '4px'
+      }}>
+        <span style={{ fontSize: '12px', color: '#666', fontWeight: '500' }}>Abundance Level</span>
+        <span style={{ fontSize: '12px', opacity: 0.7 }}>ℹ️</span>
+      </div>
+
+      {isVisible && (
+        <div style={{
+          position: 'absolute',
+          zIndex: 1000,
+          top: '100%',
+          left: '0',
+          marginTop: '8px',
+          width: '320px',
+          padding: '12px',
+          backgroundColor: 'white',
+          borderRadius: '8px',
+          boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
+          border: '1px solid #e2e8f0'
+        }}>
+          <div style={{
+            padding: '8px',
+            borderRadius: '6px',
+            backgroundColor: '#f8fafc',
+            border: '1px solid #e2e8f0'
+          }}>
+            <h4 style={{
+              fontWeight: '600',
+              fontSize: '14px',
+              color: abundanceInfo.color,
+              marginBottom: '4px'
+            }}>
+              {abundanceInfo.title}
+            </h4>
+            <p style={{
+              fontSize: '12px',
+              color: '#374151',
+              lineHeight: '1.4',
+              marginBottom: '8px'
+            }}>
+              {abundanceInfo.description}
+            </p>
+            <div style={{
+              fontSize: '11px',
+              color: '#6b7280',
+              paddingTop: '8px',
+              borderTop: '1px solid #e5e7eb'
+            }}>
+              <strong>How to read:</strong> The colored bar shows relative abundance. The vertical line marks your current level on the Low → High spectrum.
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
 // ✅ SpeciesItem component inline
 const SpeciesItem = ({ species, category }) => {
   const formatPercentage = (percentage) => {
@@ -116,7 +224,7 @@ const SpeciesItem = ({ species, category }) => {
       'low': '#FF5722',
       'high': '#FF5722'
     };
-    return colorMap[status] || '#666';
+    return colorMap[status?.toLowerCase()] || '#666';
   };
 
   const formatAbundance = (abundance) => {
@@ -139,7 +247,7 @@ const SpeciesItem = ({ species, category }) => {
   return (
     <div className="species-item">
       <div className="species-header">
-        <h4 className="species-name">
+        <h4 className="species-name" style={{ fontSize: '18px', fontWeight: '600', color: '#1a202c' }}>
           <i>{species.name}</i>
           {species.microbewiki_url && (
             <button 
@@ -162,24 +270,19 @@ const SpeciesItem = ({ species, category }) => {
       
       <div className="species-metrics">
         <div className="metric-row">
-          <span className="metric-label">Current Level:</span>
-          <span className="metric-value">{formatAbundance(species.current_level)}</span>
+          <span className="metric-label" style={{ fontSize: '14px', color: '#718096' }}>Current Level:</span>
+          <span className="metric-value" style={{ fontSize: '14px', fontWeight: '600', color: '#1a202c' }}>{formatAbundance(species.current_level)}</span>
         </div>
-        {species.percentage && (
-          <div className="metric-row">
-            <span className="metric-label">Percentage:</span>
-            <span className="metric-value">{formatPercentage(species.percentage)}</span>
-          </div>
-        )}
        {species.evidence_strength && (
   <div className="metric-row">
-    <span className="metric-label">Confidence Level:</span>
+    <span className="metric-label" style={{ fontSize: '14px', color: '#718096' }}>Confidence Level:</span>
     <ConfidenceTooltip level={species.evidence_strength} />
   </div>
 )}
       </div>
 
       <div className="species-progress">
+        <AbundanceLevelTooltip status={species.status} percentage={species.percentage} />
         <div className="progress-bar">
           <div 
             className="progress-fill"
@@ -683,7 +786,7 @@ const SpeciesCarousel = ({ speciesData, recommendations, currentDomain }) => {//
           const categoryData = speciesData[category];
           const allSpecies = categoryData.species;
           const status = formatCategoryStatus(category);
-          const itemsPerPage = 5;
+          const itemsPerPage = 6;
           const currentPage = categoryPages[category] || 0;
           const totalPages = Math.ceil(allSpecies.length / itemsPerPage);
           const startIdx = currentPage * itemsPerPage;

@@ -546,20 +546,40 @@ def convert_abundance_to_percentage(abundance: float) -> float:
         return 0.0
 
 def calculate_visualization_metrics(percentage: float) -> Tuple[float, float]:
+    """
+    Calculate visualization metrics for bacteria abundance display.
+    
+    Returns:
+        Tuple of (range_fill_width, marker_position) as percentages (0-100)
+        - range_fill_width: Width of the colored bar
+        - marker_position: Position of the marker indicator
+        
+    Both values should be the same, representing the bacteria's relative abundance level.
+    """
     try:
         if not percentage or percentage <= 0:
             return 0.0, 0.0
+        
+        # For very small percentages (< 0.001%), use logarithmic scaling
         if percentage < 0.001:
+            # Map very small values to 5-25% of the bar
             logp = math.log10(percentage + 1e-8)
-            scaled = max(5, min(85, (logp + 8) * 10))
-            return round(scaled, 1), round(min(100, scaled + 5), 1)
-        if percentage < 0.1:
-            scaled = 10 + (percentage / 0.1) * 70
-            return round(scaled, 1), round(min(100, scaled + 5), 1)
-        range_fill = min(95, percentage * 10)
-        return round(range_fill, 1), round(min(100, range_fill + 5), 1)
+            scaled = max(5, min(25, (logp + 8) * 3))
+            return round(scaled, 1), round(scaled, 1)
+        
+        # For small to medium percentages (0.001% - 10%), use linear scaling
+        elif percentage < 10.0:
+            # Map 0.001-10% to 5-85% of the bar for better visualization
+            scaled = 5 + (percentage / 10.0) * 80
+            return round(scaled, 1), round(scaled, 1)
+        
+        # For large percentages (>= 10%), cap at 90% to leave room
+        else:
+            scaled = min(90, 50 + (percentage / 20.0) * 40)
+            return round(scaled, 1), round(scaled, 1)
+            
     except Exception:
-        return 10.0, 15.0
+        return 10.0, 10.0
 
 def calculate_bacteria_status(abundance: float, evidence_strength: str, category: str) -> str:
     try:
@@ -627,6 +647,24 @@ def calculate_overall_health_score(bact: List[Dict]) -> Dict[str, float]:
 
 def group_bacteria_for_carousel(bacteria_analysis: List[Dict]) -> Dict:
     print(f"🔍 group_bacteria_for_carousel received {len(bacteria_analysis)} bacteria")
+    
+    # Filter out bacteria with zero abundance or percentage
+    bacteria_analysis = [
+        b for b in bacteria_analysis 
+        if b.get('abundance', 0) != 0 and b.get('percentage', 0) != 0
+    ]
+    print(f"🔍 After filtering zeros: {len(bacteria_analysis)} bacteria")
+    
+    # Filter out phylum-level classifications (too high-level for display)
+    phylum_count = sum(1 for b in bacteria_analysis if b.get('taxonomy_level') == 'phylum')
+    if phylum_count > 0:
+        print(f"🔍 Filtering out {phylum_count} phylum-level entries")
+        bacteria_analysis = [
+            b for b in bacteria_analysis 
+            if b.get('taxonomy_level') != 'phylum'
+        ]
+        print(f"🔍 After filtering phyla: {len(bacteria_analysis)} bacteria")
+    
     for b in bacteria_analysis[:3]:  # Print first 3 for debugging
         print(f"  - {b.get('bacteria_name')}: {b.get('category')} / {b.get('percentage')}")
     try:
