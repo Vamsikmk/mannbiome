@@ -369,6 +369,33 @@ class ApiService {
   }
 
   /**
+   * Get internal MannBiome clinical trials (questionnaire-enabled).
+   * @param {number} limit - Number of trials to return
+   * @param {string} status - Optional status filter
+   * @returns {Promise}
+   */
+  async getInternalClinicalTrials(limit = 200, status = null) {
+    try {
+      let endpoint = `/api/clinical-trials/internal?limit=${limit}`;
+      if (status) endpoint += `&status=${status}`;
+
+      const result = await this.request(endpoint);
+      if (result.success && result.data) {
+        return {
+          success: true,
+          trials: this.transformTrials(result.data.trials || []),
+          count: result.data.count || 0,
+          type: result.data.type || 'internal_trials'
+        };
+      }
+      return { success: false, trials: [], message: "No internal trials available" };
+    } catch (error) {
+      console.error('Error fetching internal clinical trials:', error);
+      return { success: false, trials: [], error: error.message };
+    }
+  }
+
+  /**
    * TYPE 2: Get domain-specific clinical trials
    * @param {string} domain - Health domain (gut, liver, heart, cognitive, skin, aging)
    * @param {number} limit - Number of trials to return (default: 50)
@@ -472,16 +499,68 @@ class ApiService {
   }
 
   /**
+   * Phase 5: Get linked questionnaires for a customer trial.
+   */
+  async getCustomerTrialQuestionnaires(customerId, trialId) {
+    const endpoint = `/api/customer/${customerId}/clinical-trials/${trialId}/questionnaires`;
+    const result = await this.request(endpoint);
+    if (result.success) {
+      return { success: true, questionnaires: result.data || [] };
+    }
+    return { success: false, questionnaires: [], error: result.error };
+  }
+
+  /**
+   * Phase 5: Get detailed questionnaire with saved draft.
+   */
+  async getCustomerTrialQuestionnaireDetail(customerId, trialId, questionnaireId) {
+    const endpoint = `/api/customer/${customerId}/clinical-trials/${trialId}/questionnaires/${questionnaireId}`;
+    return this.request(endpoint);
+  }
+
+  /**
+   * Phase 5: Save draft (autosave/manual) or submit response.
+   */
+  async saveCustomerTrialQuestionnaireResponse(customerId, trialId, questionnaireId, responses, submit = false) {
+    const endpoint = `/api/customer/${customerId}/clinical-trials/${trialId}/responses`;
+    return this.request(endpoint, {
+      method: 'POST',
+      body: JSON.stringify({
+        questionnaire_id: questionnaireId,
+        responses: responses || {},
+        submit
+      })
+    });
+  }
+
+  /**
+   * Phase 5: Fetch saved response.
+   */
+  async getCustomerTrialQuestionnaireResponse(customerId, trialId, responseId) {
+    const endpoint = `/api/customer/${customerId}/clinical-trials/${trialId}/responses/${responseId}`;
+    return this.request(endpoint);
+  }
+
+  /**
+   * Phase 5: Get trial-level eligibility result.
+   */
+  async getCustomerTrialEligibilityResult(customerId, trialId) {
+    const endpoint = `/api/customer/${customerId}/clinical-trials/${trialId}/eligibility-result`;
+    return this.request(endpoint);
+  }
+
+  /**
    * Transform backend trial data to frontend format
    * @param {array} trials - Raw trials from API
    * @returns {array} - Transformed trials
    */
   transformTrials(trials) {
     return (trials || []).map(trial => ({
-      trial_id: trial.nct_id,
-      nct_id: trial.nct_id,
-      name: trial.title,
-      title: trial.title,
+      trial_id: trial.trial_id || trial.id || trial.nct_id,
+      nct_id: trial.nct_id || (trial.trial_id ? `MB-${trial.trial_id}` : null),
+      source: trial.source || (trial.trial_id && !trial.nct_id ? 'internal' : 'external'),
+      name: trial.title || trial.trial_name || 'Untitled Trial',
+      title: trial.title || trial.trial_name || 'Untitled Trial',
       description: trial.description || '',
       status: this.mapStatus(trial.status),
       status_raw: trial.status,
@@ -498,8 +577,8 @@ class ApiService {
       start_date: trial.start_date,
       completion_date: trial.completion_date,
       countries: trial.countries || ['Unknown'],
-      url: trial.url || `https://clinicaltrials.gov/study/${trial.nct_id}`,
-      trial_code: trial.nct_id,
+      url: trial.url || (trial.nct_id ? `https://clinicaltrials.gov/study/${trial.nct_id}` : null),
+      trial_code: trial.nct_id || (trial.trial_id ? `MB-${trial.trial_id}` : null),
       duration: this.calculateDuration(trial.start_date, trial.completion_date),
       key_findings: trial.description ? trial.description.substring(0, 100) + '...' : ''
     }));
@@ -509,14 +588,22 @@ class ApiService {
    * Map API status to UI status
    */
   mapStatus(apiStatus) {
+    const rawStatus = String(apiStatus || '');
+    const normalizedStatus = rawStatus.toUpperCase();
     const statusMap = {
       'RECRUITING': 'open',
       'NOT_YET_RECRUITING': 'pending',
       'ACTIVE_NOT_RECRUITING': 'closed',
       'COMPLETED': 'closed',
-      'WITHDRAWN': 'closed'
+      'WITHDRAWN': 'closed',
+      'PREPARING': 'pending',
+      'ACTIVE': 'open',
+      'CANCELLED': 'closed',
+      'PAUSED': 'pending',
+      'SUBMITTED': 'pending',
+      'UNDER_REVIEW': 'pending'
     };
-    return statusMap[apiStatus] || 'active';
+    return statusMap[normalizedStatus] || 'active';
   }
 
   /**

@@ -32,6 +32,8 @@ import io
 import tempfile
 import json
 import traceback
+import urllib.error
+import urllib.request
 
 # Import the cached recommendation service
 from llm_recommendations_cached import CachedRecommendationService
@@ -274,6 +276,7 @@ def get_db():
 # -----------------------------------------------------------------------------
 # Initialize the cached recommendation service
 cached_recommendation_service = CachedRecommendationService()
+QUESTIONNAIRE_MODULE_URL = os.getenv("QUESTIONNAIRE_MODULE_URL", "http://127.0.0.1:8003").rstrip("/")
 
 # -----------------------------------------------------------------------------
 # Health: liveness + readiness
@@ -339,6 +342,89 @@ def _format_date(d: Optional[date]) -> Optional[str]:
         return d.strftime("%B %d, %Y")
     except Exception:
         return str(d)
+
+
+def _questionnaire_proxy_request(method: str, path: str, payload: Optional[Dict[str, Any]] = None):
+    """
+    Proxy helper to questionnaire-module service.
+    """
+    url = f"{QUESTIONNAIRE_MODULE_URL}{path}"
+    body = None
+    if payload is not None:
+        body = json.dumps(payload).encode("utf-8")
+
+    request = urllib.request.Request(url=url, data=body, method=method.upper())
+    request.add_header("Content-Type", "application/json")
+    request.add_header("Accept", "application/json")
+
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            raw = response.read().decode("utf-8")
+            if not raw:
+                return {"success": True}
+            return json.loads(raw)
+    except urllib.error.HTTPError as e:
+        detail = f"Questionnaire service error ({e.code})"
+        try:
+            err_raw = e.read().decode("utf-8")
+            if err_raw:
+                parsed = json.loads(err_raw)
+                detail = parsed.get("detail", parsed)
+        except Exception:
+            pass
+        raise HTTPException(status_code=e.code, detail=detail)
+    except urllib.error.URLError as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Questionnaire service unavailable: {str(e.reason)}",
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Questionnaire proxy failure: {str(e)}")
+
+
+def _resolve_trial_identifier_to_id(trial_identifier: Any, db: Session) -> int:
+    """
+    Resolve trial identifier from frontend into numeric internal trial_id.
+    Supports plain numeric ID and best-effort mapping from external identifiers
+    like NCT/trial code if those columns exist.
+    """
+    if trial_identifier is None:
+        raise HTTPException(status_code=400, detail="trial_id is required")
+
+    trial_identifier_str = str(trial_identifier).strip()
+    if trial_identifier_str.isdigit():
+        return int(trial_identifier_str)
+
+    if db is None:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    cols_rows = db.execute(
+        text(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'clinical_trial'
+              AND column_name IN ('trial_id', 'nct_id', 'trial_code', 'external_trial_id')
+            """
+        )
+    ).fetchall()
+    cols = {row[0] for row in cols_rows}
+
+    for column in ("nct_id", "trial_code", "external_trial_id"):
+        if column not in cols:
+            continue
+        row = db.execute(
+            text(f"SELECT trial_id FROM public.clinical_trial WHERE {column} = :trial_identifier LIMIT 1"),
+            {"trial_identifier": trial_identifier_str},
+        ).fetchone()
+        if row and row[0] is not None:
+            return int(row[0])
+
+    raise HTTPException(
+        status_code=404,
+        detail=f"Could not resolve trial identifier '{trial_identifier_str}' to internal trial_id",
+    )
 
 def _fetch_domain_scores_for_customer(customer_id: int, db: Session):
     """
@@ -1538,6 +1624,72 @@ def get_all_trials(limit: int = 50, status: Optional[str] = None, phase: Optiona
         raise HTTPException(status_code=500, detail=f"Error fetching trials: {str(e)}")
 
 
+@app.get("/api/clinical-trials/internal", tags=["Clinical Trials"])
+def get_internal_trials(limit: int = 200, status: Optional[str] = None, db: Session = Depends(get_db)):
+    """
+    Internal MannBiome trials created in local platform.
+    These are the trials that can have linked questionnaires and eligibility forms.
+    """
+    try:
+        if db is None:
+            raise HTTPException(status_code=503, detail="Database not available")
+
+        query = """
+            SELECT
+                ct.trial_id,
+                ct.trial_name AS title,
+                ct.trial_description AS description,
+                ct.trial_status AS status,
+                ct.trial_start_date AS start_date,
+                ct.trial_end_date AS completion_date,
+                ct.product_name,
+                ct.vendor_id
+            FROM public.clinical_trial ct
+            WHERE 1 = 1
+        """
+        params: Dict[str, Any] = {"limit": int(limit)}
+
+        if status:
+            query += " AND LOWER(COALESCE(ct.trial_status, '')) = LOWER(:status)"
+            params["status"] = status
+
+        query += " ORDER BY ct.created_at DESC LIMIT :limit"
+
+        rows = db.execute(text(query), params).fetchall()
+        trials = []
+        for row in rows:
+            trials.append({
+                "trial_id": int(row.trial_id),
+                "nct_id": None,
+                "title": row.title,
+                "description": row.description or "",
+                "status": row.status or "active",
+                "phase": None,
+                "start_date": row.start_date.isoformat() if row.start_date else None,
+                "completion_date": row.completion_date.isoformat() if row.completion_date else None,
+                "sponsor": row.vendor_id or "MannBiome",
+                "enrollment": 0,
+                "conditions": [],
+                "interventions": [row.product_name] if row.product_name else [],
+                "countries": [],
+                "url": None,
+                "source": "internal",
+            })
+
+        return {
+            "success": True,
+            "type": "internal_trials",
+            "description": "MannBiome internal trials",
+            "trials": trials,
+            "count": len(trials),
+            "timestamp": datetime.now().isoformat(),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching internal trials: {str(e)}")
+
+
 @app.get("/api/clinical-trials/by-domain/{domain}", tags=["Clinical Trials"])
 def get_trials_by_domain(
     domain: str, 
@@ -1809,6 +1961,93 @@ def get_customer_relevant_trials(
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching customer trials: {str(e)}")
+
+
+@app.get("/api/customer/{customer_id}/clinical-trials/{trial_id}/questionnaires", tags=["Clinical Trials"])
+def get_customer_trial_questionnaires(customer_id: int, trial_id: str, db: Session = Depends(get_db)):
+    """
+    Phase 5: list questionnaires linked to a trial with response progress.
+    """
+    resolved_trial_id = _resolve_trial_identifier_to_id(trial_id, db)
+    return _questionnaire_proxy_request(
+        "GET",
+        f"/api/customer/{customer_id}/trials/{resolved_trial_id}/questionnaires",
+    )
+
+
+@app.get(
+    "/api/customer/{customer_id}/clinical-trials/{trial_id}/questionnaires/{questionnaire_id}",
+    tags=["Clinical Trials"],
+)
+def get_customer_trial_questionnaire_detail(
+    customer_id: int,
+    trial_id: str,
+    questionnaire_id: int,
+    db: Session = Depends(get_db),
+):
+    """
+    Phase 5: fetch one linked questionnaire + saved draft for this customer.
+    """
+    resolved_trial_id = _resolve_trial_identifier_to_id(trial_id, db)
+    return _questionnaire_proxy_request(
+        "GET",
+        f"/api/customer/{customer_id}/trials/{resolved_trial_id}/questionnaires/{questionnaire_id}",
+    )
+
+
+@app.post("/api/customer/{customer_id}/clinical-trials/{trial_id}/responses", tags=["Clinical Trials"])
+def upsert_customer_trial_response(
+    customer_id: int,
+    trial_id: str,
+    payload: Dict[str, Any],
+    db: Session = Depends(get_db),
+):
+    """
+    Phase 5: autosave or submit questionnaire response.
+    """
+    resolved_trial_id = _resolve_trial_identifier_to_id(trial_id, db)
+    return _questionnaire_proxy_request(
+        "POST",
+        f"/api/customer/{customer_id}/trials/{resolved_trial_id}/responses",
+        payload=payload,
+    )
+
+
+@app.get(
+    "/api/customer/{customer_id}/clinical-trials/{trial_id}/responses/{response_id}",
+    tags=["Clinical Trials"],
+)
+def get_customer_trial_response(
+    customer_id: int,
+    trial_id: str,
+    response_id: int,
+    db: Session = Depends(get_db),
+):
+    """
+    Phase 5: fetch one saved response by response ID.
+    """
+    resolved_trial_id = _resolve_trial_identifier_to_id(trial_id, db)
+    return _questionnaire_proxy_request(
+        "GET",
+        f"/api/customer/{customer_id}/trials/{resolved_trial_id}/responses/{response_id}",
+    )
+
+
+@app.get("/api/customer/{customer_id}/clinical-trials/{trial_id}/eligibility-result", tags=["Clinical Trials"])
+def get_customer_trial_eligibility_result(
+    customer_id: int,
+    trial_id: str,
+    db: Session = Depends(get_db),
+):
+    """
+    Phase 5: overall eligibility summary for this trial/customer.
+    """
+    resolved_trial_id = _resolve_trial_identifier_to_id(trial_id, db)
+    return _questionnaire_proxy_request(
+        "GET",
+        f"/api/customer/{customer_id}/trials/{resolved_trial_id}/eligibility-result",
+    )
+
 
 # -----------------------------------------------------------------------------
 # ----------------------------  DOMAIN API (separate)  ------------------------
