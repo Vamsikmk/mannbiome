@@ -124,12 +124,16 @@ class PatientReportParser:
                 "  pip install PyPDF2"
             )
     
-    def parse_report(self, pdf_path: str) -> pd.DataFrame:
+    def parse_report(self, file_path: str) -> pd.DataFrame:
         """
-        Main method to parse a patient microbiome report PDF.
+        Main method to parse a patient microbiome report (PDF or TXT).
+        
+        Supports:
+        - PDF microbiome reports (various lab formats)
+        - MetaPhlAn format TXT files (pipe-delimited taxonomic strings)
         
         Args:
-            pdf_path: Path to the PDF file
+            file_path: Path to the report file (PDF or TXT)
             
         Returns:
             DataFrame with columns:
@@ -139,13 +143,33 @@ class PatientReportParser:
                 - timepoint: str (e.g., 'First Year', 'Second Year', 'Patient', 'Unknown')
                 - extraction_confidence: float (0-1)
         """
-        pdf_path = Path(pdf_path)
-        if not pdf_path.exists():
-            raise FileNotFoundError(f"PDF file not found: {pdf_path}")
+        file_path = Path(file_path)
+        if not file_path.exists():
+            raise FileNotFoundError(f"Report file not found: {file_path}")
         
         self.logger.info(f"\n{'='*60}")
-        self.logger.info(f"PARSING PATIENT REPORT: {pdf_path.name}")
+        self.logger.info(f"PARSING PATIENT REPORT: {file_path.name}")
         self.logger.info(f"{'='*60}")
+        
+        # Determine file type and parse accordingly
+        if file_path.suffix.lower() == '.pdf':
+            return self._parse_pdf_report(file_path)
+        elif file_path.suffix.lower() in ['.txt', '.tsv']:
+            return self._parse_text_report(file_path)
+        else:
+            raise ValueError(f"Unsupported file format: {file_path.suffix}. Supported: .pdf, .txt, .tsv")
+    
+    def _parse_pdf_report(self, pdf_path: Path) -> pd.DataFrame:
+        """
+        Parse a PDF microbiome report.
+        
+        Args:
+            pdf_path: Path to the PDF file
+            
+        Returns:
+            DataFrame with bacteria abundance data
+        """
+        self.logger.info(f"Detected file type: PDF")
         
         # Try multiple extraction strategies
         results = []
@@ -748,6 +772,190 @@ class PatientReportParser:
                 self.logger.warning(f"PyPDF2 extraction failed: {e}")
         
         return text
+    
+    def _parse_text_report(self, txt_path: Path) -> pd.DataFrame:
+        """
+        Parse a text-based microbiome report (e.g., MetaPhlAn format).
+        
+        Supports formats like:
+        - MetaPhlAn: k__Bacteria|p__Firmicutes|c__Bacilli|o__Lactobacillales|f__Streptococcaceae|g__Streptococcus|s__Streptococcus_parasanguinis
+        
+        Args:
+            txt_path: Path to the text file
+            
+        Returns:
+            DataFrame with bacteria abundance data
+        """
+        self.logger.info(f"Detected file type: TXT/TSV")
+        self.logger.info(f"Attempting MetaPhlAn format parsing...")
+        
+        results = []
+        
+        with open(txt_path, 'r', encoding='utf-8') as f:
+            for line_num, line in enumerate(f, 1):
+                # Skip comments and empty lines
+                if line.startswith('#') or not line.strip():
+                    continue
+                
+                # Split by tab (MetaPhlAn format is tab-delimited)
+                parts = line.strip().split('\t')
+                if len(parts) < 2:
+                    continue
+                
+                taxonomic_string = parts[0]
+                
+                # Skip if not a bacterial taxonomy string
+                if not taxonomic_string.startswith('k__'):
+                    continue
+                
+                # Extract relative abundance (second column)
+                try:
+                    relative_abundance = float(parts[2]) if len(parts) > 2 else float(parts[1])
+                except (ValueError, IndexError):
+                    self.logger.debug(f"Could not parse abundance from line {line_num}: {line.strip()}")
+                    continue
+                
+                # Parse the taxonomic string
+                bacteria_data = self._parse_metaphlan_taxonomy(taxonomic_string, relative_abundance)
+                
+                if bacteria_data:
+                    results.append(bacteria_data)
+        
+        if not results:
+            self.logger.warning("No bacteria data extracted from text file")
+            return pd.DataFrame(columns=[
+                'bacteria_name', 'relative_abundance', 'taxonomy_level', 'timepoint', 'extraction_confidence'
+            ])
+        
+        df = pd.DataFrame(results)
+        
+        self.logger.info(f"✅ Extracted {len(df)} bacterial entries from MetaPhlAn format")
+        self.logger.info(f"   Taxonomy levels found: {df['taxonomy_level'].value_counts().to_dict()}")
+        
+        return df
+    
+    def _parse_metaphlan_taxonomy(self, taxonomic_string: str, relative_abundance: float) -> Optional[Dict]:
+        """
+        Parse MetaPhlAn taxonomic string format.
+        
+        Format: k__Kingdom|p__Phylum|c__Class|o__Order|f__Family|g__Genus|s__Species
+        
+        Examples:
+        - k__Bacteria|p__Firmicutes
+        - k__Bacteria|p__Firmicutes|c__Bacilli|o__Lactobacillales|f__Streptococcaceae|g__Streptococcus
+        - k__Bacteria|p__Firmicutes|c__Bacilli|o__Lactobacillales|f__Streptococcaceae|g__Streptococcus|s__Streptococcus_parasanguinis
+        
+        Args:
+            taxonomic_string: Pipe-delimited taxonomic classification
+            relative_abundance: Relative abundance percentage
+            
+        Returns:
+            Dictionary with bacteria_name, relative_abundance, taxonomy_level, timepoint, extraction_confidence
+            or None if parsing fails
+        """
+        # Split by pipe
+        levels = taxonomic_string.split('|')
+        
+        if not levels or not levels[0].startswith('k__'):
+            return None
+        
+        # Extract each taxonomic level
+        taxonomy = {}
+        for level in levels:
+            if '__' in level:
+                prefix, name = level.split('__', 1)
+                if name:  # Skip empty names
+                    taxonomy[prefix] = name
+        
+        # Determine the most specific level and extract bacteria name
+        bacteria_name = None
+        taxonomy_level = None
+        
+        # Priority: Species > Genus > Family > Order > Class > Phylum
+        if 's' in taxonomy:
+            # Species level
+            species_name = taxonomy['s']
+            # Clean up species name (replace underscores with spaces)
+            species_name = species_name.replace('_', ' ')
+            
+            # If genus is available, format as "Genus species"
+            if 'g' in taxonomy:
+                genus_name = taxonomy['g']
+                # Handle cases where species already includes genus
+                if not species_name.startswith(genus_name):
+                    bacteria_name = f"{genus_name} {species_name}"
+                else:
+                    bacteria_name = species_name
+            else:
+                bacteria_name = species_name
+            
+            taxonomy_level = 'species'
+            
+        elif 'g' in taxonomy:
+            # Genus level
+            bacteria_name = taxonomy['g']
+            taxonomy_level = 'genus'
+            
+        elif 'f' in taxonomy:
+            # Family level
+            bacteria_name = taxonomy['f']
+            taxonomy_level = 'family'
+            
+        elif 'o' in taxonomy:
+            # Order level
+            bacteria_name = taxonomy['o']
+            taxonomy_level = 'order'
+            
+        elif 'c' in taxonomy:
+            # Class level
+            bacteria_name = taxonomy['c']
+            taxonomy_level = 'class'
+            
+        elif 'p' in taxonomy:
+            # Phylum level
+            bacteria_name = taxonomy['p']
+            taxonomy_level = 'phylum'
+        
+        if not bacteria_name:
+            return None
+        
+        # Clean up bacteria name
+        bacteria_name = self._clean_bacteria_name(bacteria_name)
+        
+        return {
+            'bacteria_name': bacteria_name,
+            'relative_abundance': relative_abundance,
+            'taxonomy_level': taxonomy_level,
+            'timepoint': 'Sample',  # MetaPhlAn files typically represent a single sample
+            'extraction_confidence': 1.0  # High confidence for structured data
+        }
+    
+    def _clean_bacteria_name(self, name: str) -> str:
+        """
+        Clean bacteria name by removing common prefixes/suffixes and formatting.
+        
+        Examples:
+        - "Streptococcus_parasanguinis" -> "Streptococcus parasanguinis"
+        - "Streptococcaceae" -> "Streptococcaceae"
+        - "Bacilli_unclassified" -> "Bacilli (unclassified)"
+        """
+        # Replace underscores with spaces
+        name = name.replace('_', ' ')
+        
+        # Handle "unclassified" suffix
+        if name.endswith(' unclassified'):
+            name = name.replace(' unclassified', ' (unclassified)')
+        
+        # Capitalize genus names properly
+        words = name.split()
+        if words:
+            # First word should be capitalized (genus)
+            words[0] = words[0].capitalize()
+            # Rest should be lowercase (species, strain)
+            words[1:] = [w.lower() if not w.startswith('(') else w for w in words[1:]]
+            name = ' '.join(words)
+        
+        return name
     
     def _merge_and_deduplicate(self, results: List[Tuple[str, pd.DataFrame]]) -> pd.DataFrame:
         """

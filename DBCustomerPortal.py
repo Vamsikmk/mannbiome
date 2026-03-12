@@ -902,11 +902,13 @@ async def upload_patient_report(
     db: Session = Depends(get_db)
 ):
     """
-    Upload and process a patient PDF report.
+    Upload and process a patient microbiome report.
+    
+    Supported formats: PDF, TXT (MetaPhlAn), TSV (MetaPhlAn)
     
     - Validates customer exists
-    - Saves PDF to local storage (S3-compatible path structure)
-    - Parses bacteria data from PDF
+    - Saves file to local storage (S3-compatible path structure)
+    - Parses bacteria data from report (PDF or MetaPhlAn format)
     - Scores bacteria across 8 health domains
     - Stores results in database
     - Returns processing results immediately (synchronous)
@@ -922,9 +924,11 @@ async def upload_patient_report(
         if not customer:
             raise HTTPException(status_code=404, detail=f"Customer {customer_id} not found")
         
-        # Step 2: Validate file is PDF
-        if not file.filename.endswith('.pdf'):
-            raise HTTPException(status_code=400, detail="Only PDF files are supported")
+        # Step 2: Validate file is PDF, TXT, or TSV
+        allowed_extensions = ['.pdf', '.txt', '.tsv']
+        file_ext = Path(file.filename).suffix.lower()
+        if file_ext not in allowed_extensions:
+            raise HTTPException(status_code=400, detail="Only PDF, TXT, and TSV files are supported")
         
         # Step 3: Create customer-specific upload directory (S3-compatible structure)
         upload_base = os.getenv("UPLOAD_BASE_PATH", "./uploads")
@@ -933,11 +937,11 @@ async def upload_patient_report(
         
         # Generate filename with timestamp
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        pdf_filename = f"report_{timestamp}.pdf"
-        pdf_path = customer_dir / pdf_filename
+        report_filename = f"report_{timestamp}{file_ext}"
+        report_path = customer_dir / report_filename
         
-        # Step 4: Save PDF to local storage
-        with open(pdf_path, "wb") as buffer:
+        # Step 4: Save file to local storage
+        with open(report_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
         
         # Step 5: Import processing pipeline
@@ -945,14 +949,14 @@ async def upload_patient_report(
         from src.patient_processing.bacteria_scorer import BacteriaScorer
         from src.patient_processing.patient_data_inserter import PatientDataInserter
         
-        # Step 6: Parse PDF - returns DataFrame
+        # Step 6: Parse file (PDF or MetaPhlAn format) - returns DataFrame
         parser = PatientReportParser()
-        bacteria_df = parser.parse_report(str(pdf_path))
+        bacteria_df = parser.parse_report(str(report_path))
         
         if bacteria_df is None or bacteria_df.empty:
             raise HTTPException(
                 status_code=400, 
-                detail="Failed to extract bacteria data from PDF. Please ensure the PDF is in the correct format."
+                detail="Failed to extract bacteria data from the report. Please ensure the file is in the correct format (PDF or MetaPhlAn TXT/TSV)."
             )
         
         # Step 7: Score bacteria across domains - expects DataFrame, returns DataFrame with scored bacteria
@@ -1052,7 +1056,7 @@ async def upload_patient_report(
             "success": True,
             "customer_id": customer_id,
             "upload_timestamp": timestamp,
-            "pdf_path": str(pdf_path),
+            "report_path": str(report_path),
             "processing_results": {
                 "total_bacteria": len(bacteria_df),
                 "bacteria_scored": bacteria_scored,
@@ -1072,8 +1076,8 @@ async def upload_patient_report(
         raise
     except Exception as e:
         # Clean up uploaded file if processing fails
-        if 'pdf_path' in locals() and Path(pdf_path).exists():
-            Path(pdf_path).unlink()
+        if 'report_path' in locals() and Path(report_path).exists():
+            Path(report_path).unlink()
         
         raise HTTPException(
             status_code=500,
