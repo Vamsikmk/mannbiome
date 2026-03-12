@@ -973,6 +973,15 @@ class PatientReportParser:
         if combined.empty:
             return combined
         
+        # Filter out phylum-level classifications - only keep genus and species level
+        phylum_count = (combined['taxonomy_level'] == 'phylum').sum()
+        if phylum_count > 0:
+            self.logger.info(f"🔍 Filtering out {phylum_count} phylum-level entries (too high-level for bacteria analysis)")
+            combined = combined[combined['taxonomy_level'] != 'phylum'].copy()
+        
+        if combined.empty:
+            return combined
+        
         # Deduplicate: keep highest confidence for each bacteria+timepoint combination
         combined = combined.sort_values('extraction_confidence', ascending=False)
         combined = combined.drop_duplicates(subset=['bacteria_name', 'timepoint'], keep='first')
