@@ -1,5 +1,5 @@
 // components/Header/Header.jsx - Enhanced with mobile support
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAppContext } from '../../context';
 import './Header.css';
 
@@ -8,6 +8,8 @@ const Header = () => {
   const { user } = state;
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const profileRef = useRef(null);
 
   // Detect mobile screen size
   useEffect(() => {
@@ -24,17 +26,20 @@ const Header = () => {
     return () => window.removeEventListener('resize', checkIsMobile);
   }, []);
 
-  // Close mobile menu when clicking outside
+  // Close mobile menu and profile dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (event) => {
       if (isMobileMenuOpen && !event.target.closest('.mobile-tabs-wrapper') && !event.target.closest('.mobile-nav-toggle')) {
         setIsMobileMenuOpen(false);
       }
+      if (isProfileOpen && profileRef.current && !profileRef.current.contains(event.target)) {
+        setIsProfileOpen(false);
+      }
     };
 
     document.addEventListener('click', handleClickOutside);
     return () => document.removeEventListener('click', handleClickOutside);
-  }, [isMobileMenuOpen]);
+  }, [isMobileMenuOpen, isProfileOpen]);
 
   // Close mobile menu on escape key
   useEffect(() => {
@@ -115,10 +120,14 @@ const Header = () => {
 
   const handleLogout = () => {
     console.log('Logout clicked');
-    // Close mobile menu if open
-    if (isMobile) {
-      setIsMobileMenuOpen(false);
-    }
+    setIsProfileOpen(false);
+    if (isMobile) setIsMobileMenuOpen(false);
+  };
+
+  const handleMyTrials = () => {
+    navigateToPage('my-trials');
+    setIsProfileOpen(false);
+    if (isMobile) setIsMobileMenuOpen(false);
   };
 
   return (
@@ -164,14 +173,41 @@ const Header = () => {
             </button>
           )}
           
-          <div className="user-menu">
-            <div className="user-icon" tabIndex="0" role="button" aria-label={`User ${user.name}`}>
+          <div className="user-menu" ref={profileRef}>
+            <div
+              className="user-icon"
+              tabIndex="0"
+              role="button"
+              aria-label={`User ${user.name}`}
+              aria-expanded={isProfileOpen}
+              onClick={() => setIsProfileOpen(!isProfileOpen)}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setIsProfileOpen(!isProfileOpen); }}
+            >
               {user.initials}
             </div>
             <div className="user-name">{user.name}</div>
-            <button className="logout-button" onClick={handleLogout}>
-              Logout
-            </button>
+
+            {isProfileOpen && (
+              <div className="profile-dropdown">
+                <button className="profile-dropdown-item" onClick={handleMyTrials}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"></path>
+                    <rect x="9" y="3" width="6" height="4" rx="1"></rect>
+                    <path d="M9 12h6M9 16h4"></path>
+                  </svg>
+                  My Trials
+                </button>
+                <div className="profile-dropdown-divider"></div>
+                <button className="profile-dropdown-item profile-dropdown-logout" onClick={handleLogout}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"></path>
+                    <polyline points="16 17 21 12 16 7"></polyline>
+                    <line x1="21" y1="12" x2="9" y2="12"></line>
+                  </svg>
+                  Logout
+                </button>
+              </div>
+            )}
           </div>
         </div>
 

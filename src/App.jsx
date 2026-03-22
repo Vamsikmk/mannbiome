@@ -7,6 +7,7 @@ import Analysis from './pages/Analysis/Analysis';
 import Recommendations from './pages/Recommendations/Recommendations';
 import Download from './pages/Download/Download';
 import ClinicalTrials from './pages/ClinicalTrials/ClinicalTrials';
+import MyTrials from './pages/MyTrials/MyTrials';
 import HealthModal from './components/Modal/HealthModal';
 import { AppProvider } from './context'; // Import from barrel export
 import { useAppContext } from './context';
@@ -75,6 +76,21 @@ const ApiStatus = () => {
 // Main App Content Component
 const AppContent = () => {
   const { state } = useAppContext();
+
+  // My Trials page
+  if (state.currentPage === 'my-trials') {
+    return (
+      <div className="app">
+        <Header />
+        <ApiStatus />
+        <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '0 20px' }}>
+          <MyTrials />
+        </div>
+        <HealthModal />
+        <style>{`@keyframes spin { 0%{transform:rotate(0deg)} 100%{transform:rotate(360deg)} }`}</style>
+      </div>
+    );
+  }
 
   // Show Clinical Trials page separately
   if (state.currentPage === 'clinical-trials') {

@@ -550,6 +550,22 @@ class ApiService {
   }
 
   /**
+   * Consent gate: check if a consent form exists for the trial and whether the customer signed it.
+   */
+  async getConsentStatus(customerId, trialId) {
+    const endpoint = `/api/customer/${customerId}/clinical-trials/${trialId}/consent-status`;
+    return this.request(endpoint);
+  }
+
+  /**
+   * Consent gate: record the customer's click-wrap digital signature.
+   */
+  async signConsent(customerId, trialId) {
+    const endpoint = `/api/customer/${customerId}/clinical-trials/${trialId}/consent-sign`;
+    return this.request(endpoint, { method: 'POST' });
+  }
+
+  /**
    * Transform backend trial data to frontend format
    * @param {array} trials - Raw trials from API
    * @returns {array} - Transformed trials

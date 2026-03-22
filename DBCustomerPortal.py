@@ -332,6 +332,20 @@ def readiness(db: Session = Depends(get_db)):
         raise HTTPException(status_code=503, detail=f"Readiness failed: {e}")
 
 # -----------------------------------------------------------------------------
+# S3 client for consent signatures
+# -----------------------------------------------------------------------------
+import boto3
+from botocore.exceptions import ClientError as _S3ClientError
+
+_s3 = boto3.client(
+    's3',
+    aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
+    aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY'),
+    region_name=os.getenv('AWS_REGION', 'us-east-2'),
+)
+_CLINICAL_DOCS_BUCKET = os.getenv('CLINICAL_DOCS_S3_BUCKET', 'clinical-trial-documents-mannbiome')
+
+# -----------------------------------------------------------------------------
 # Shared helpers (NO mock outputs)
 # -----------------------------------------------------------------------------
 def _format_date(d: Optional[date]) -> Optional[str]:
@@ -2051,6 +2065,93 @@ def get_customer_trial_eligibility_result(
         "GET",
         f"/api/customer/{customer_id}/trials/{resolved_trial_id}/eligibility-result",
     )
+
+
+@app.get("/api/customer/{customer_id}/clinical-trials/{trial_id}/consent-status", tags=["Clinical Trials"])
+def get_consent_status(customer_id: int, trial_id: str, db: Session = Depends(get_db)):
+    """Check if a consent form document exists for the trial and whether this customer has signed it."""
+    resolved_trial_id = _resolve_trial_identifier_to_id(trial_id, db)
+
+    row = db.execute(
+        text("""
+            SELECT document_id, document_name, s3_url, uploaded_at
+            FROM public.trial_document
+            WHERE trial_id = :tid AND document_type = 'consent_form'
+            ORDER BY uploaded_at DESC
+            LIMIT 1
+        """),
+        {"tid": resolved_trial_id},
+    ).fetchone()
+
+    if not row:
+        return {"has_consent_form": False, "has_signed": False, "consent_document": None, "signature": None}
+
+    sig_key = f"clinical-trials/trial-{resolved_trial_id}/consent/customer_{customer_id}_signed.json"
+    has_signed = False
+    sig_data = None
+    try:
+        resp = _s3.get_object(Bucket=_CLINICAL_DOCS_BUCKET, Key=sig_key)
+        sig_data = json.loads(resp['Body'].read().decode('utf-8'))
+        has_signed = True
+    except _S3ClientError as e:
+        if e.response['Error']['Code'] not in ('NoSuchKey', 'AccessDenied'):
+            raise HTTPException(status_code=500, detail=f"S3 error: {e}")
+
+    return {
+        "has_consent_form": True,
+        "has_signed": has_signed,
+        "consent_document": {
+            "document_id": row[0],
+            "document_name": row[1],
+            "s3_url": row[2],
+            "uploaded_at": row[3].isoformat() if row[3] else None,
+        },
+        "signature": sig_data,
+    }
+
+
+@app.post("/api/customer/{customer_id}/clinical-trials/{trial_id}/consent-sign", tags=["Clinical Trials"])
+def sign_consent(customer_id: int, trial_id: str, db: Session = Depends(get_db)):
+    """Record the customer's click-wrap digital consent signature as a JSON file in S3."""
+    resolved_trial_id = _resolve_trial_identifier_to_id(trial_id, db)
+
+    row = db.execute(
+        text("""
+            SELECT document_id, document_name
+            FROM public.trial_document
+            WHERE trial_id = :tid AND document_type = 'consent_form'
+            ORDER BY uploaded_at DESC
+            LIMIT 1
+        """),
+        {"tid": resolved_trial_id},
+    ).fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="No consent form found for this trial")
+
+    from datetime import timezone as _tz
+    sig_data = {
+        "customer_id": customer_id,
+        "trial_id": resolved_trial_id,
+        "consent_document_id": row[0],
+        "consent_document_name": row[1],
+        "signed_at": datetime.now(_tz.utc).isoformat(),
+        "signature_type": "click_wrap",
+        "agreement_text": "I have read and agree to the terms and conditions of this consent form.",
+    }
+
+    sig_key = f"clinical-trials/trial-{resolved_trial_id}/consent/customer_{customer_id}_signed.json"
+    try:
+        _s3.put_object(
+            Bucket=_CLINICAL_DOCS_BUCKET,
+            Key=sig_key,
+            Body=json.dumps(sig_data, indent=2).encode('utf-8'),
+            ContentType='application/json',
+        )
+    except _S3ClientError as e:
+        raise HTTPException(status_code=500, detail=f"Failed to store signature: {e}")
+
+    return {"success": True, "message": "Consent form signed successfully", "signature": sig_data}
 
 
 # -----------------------------------------------------------------------------
